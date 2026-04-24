@@ -1,11 +1,11 @@
-# YizziCamModV3.2 												[![Github All Releases](https://img.shields.io/github/downloads/Yizzii/YizziCamModV2/total.svg)]() 
+# YizziCamModReimagined 												[![Github All Releases](https://img.shields.io/github/downloads/Yizzii/YizziCamModV2/total.svg)]() 
 
 Camera Mod with in game UI!
 
 ![](cammod.gif)
 
 ### *Features:*
-* Monitor UI (tab to enable, shitty OnGUI but im lazy so cope)
+* Monitor UI (tab to open a menu for extra options)
 * Freecam with gamepad support
 * Spectator with ajustable offset (and a toggle to control it with wasd)
 * First Person View with smoothing
@@ -14,14 +14,16 @@ Camera Mod with in game UI!
 * Grabbable Handles (you can only grab right side with right hand and left side with left hand)
 * Green Screen (in city)
 * Adjustable FOV, Nearclip and smoothing
+* Weather and Time control (In Tab Menu)
+* Save settings Button (FOV,PV, etc.) (In tab Menu)
 
 ### *Controls:*
-* disable first person view by pressing X/Y
-* disable third person view by pressing X/Y
-* press X/Y to teleport camera in front of you
-* hold grip on banana handle to grab camera
-* press tab on IRL keyboard for monitor UI
-* WASD/arrow keys for freecam(also a toggle for gamepad)
+* disable first person view by pressing X/Y or F6 on keyboard
+* disable third person view by pressing X/Y or F6 joystick
+* press X/Y or F6 to teleport camera in front of you
+* hold grip/trigger on banana handle to grab camera
+* press tab on IRL keyboard for Menu (extra options)
+* WASD/arrow keys for freecam (also a toggle for gamepad)
  
 # *Disclamers:*
 * **This product is not affiliated with Gorilla Tag or Another Axiom LLC and is not endorsed or otherwise sponsored by Another Axiom LLC. Portions of the materials contained herein are property of Another Axiom LLC. ©2021 Another Axiom LLC.**
