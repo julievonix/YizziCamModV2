@@ -2,7 +2,7 @@
 using System.IO;
 using System.Reflection;
 using BepInEx;
-using Cinemachine;
+using Unity.Cinemachine;
 using GorillaLocomotion;
 using UnityEngine;
 using UnityEngine.UI;

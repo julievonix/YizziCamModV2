@@ -2,8 +2,9 @@
 using System.IO;
 using System.Reflection;
 using BepInEx;
-using Cinemachine;
+using Unity.Cinemachine;
 using GorillaLocomotion;
+using Player = GorillaLocomotion.GTPlayer;
 using UnityEngine;
 using UnityEngine.UI;
 using YizziCamModV2.Comps;
@@ -71,7 +72,7 @@ namespace YizziCamModV2
         {
             this.gameObject.AddComponent<InputManager>().gameObject.AddComponent<UI>();
             ColorScreenGO = LoadBundle("ColorScreen", "YizziCamModV2.Assets.colorscreen");
-            CameraTablet = LoadBundle("CameraTablet", "YizziCamModV2.Assets.yizzicamera");
+            CameraTablet = LoadBundle("CameraTablet", "YizziCamModV2.Assets.yizzicam");
             FirstPersonCameraGO = GorillaTagger.Instance.mainCamera;
             ThirdPersonCameraGO = GameObject.Find("Player Objects/Third Person Camera/Shoulder Camera");
             CMVirtualCameraGO = GameObject.Find("Player Objects/Third Person Camera/Shoulder Camera/CM vcam1");

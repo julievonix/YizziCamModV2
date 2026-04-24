@@ -1,6 +1,7 @@
 ﻿using Photon.Pun;
 using UnityEngine;
 using GorillaLocomotion;
+using Player = GorillaLocomotion.GTPlayer;
 using UnityEngine.InputSystem;
 #pragma warning disable CS0618
 namespace YizziCamModV2.Comps
@@ -125,7 +126,7 @@ namespace YizziCamModV2.Comps
                     {
                         if (player.transform.parent.gameObject.active)
                         {
-                            GUI.Label(new Rect(250, 20 + (i * 25), 160, 20), player.playerText.text);
+                            GUI.Label(new Rect(250, 20 + (i * 25), 160, 20), player.playerText1 != null ? player.playerText1.text : "Unknown");
                             if (GUI.Button(new Rect(360, 20 + (i * 25), 67, 20), "Spectate"))
                             {
                                 followobject = player.gameObject;
