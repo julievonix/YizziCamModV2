@@ -29,7 +29,18 @@ namespace YizziCamModV2.Comps
         bool controllerfreecam;
         bool speclookat;
         bool controloffset;
+        bool showWatermark = true;
+        bool specOffsetOpen;
+        bool raining;
+        int timePreset = 1;
+        bool pendingTimeWeather;
+        GUIStyle watermarkStyle;
         GameObject followobject;
+        BetterDayNightManager dayNightManager;
+        static readonly string[] timeNames = { "Dawn", "Day", "Night Fall", "Night", "Midnight" };
+        static readonly int[] timeIndices = { 1, 3, 6, 0, 8 };
+        Texture2D darkBg;
+        GUIStyle boxStyle;
         float freecamspeed = 0.1f;
         float freecamsens = 1f;
         float rotX;
@@ -51,74 +62,191 @@ namespace YizziCamModV2.Comps
             beachthing = GameObject.Find("Environment Objects/LocalObjects_Prefab/ForestToBeach");
             basement = GameObject.Find("Environment Objects/LocalObjects_Prefab/Basement");
             citybuildings = GameObject.Find("Environment Objects/LocalObjects_Prefab/City/CosmeticsRoomAnchor/rain");
+            LoadSettings();
         }
+
+        void LoadSettings()
+        {
+            if (Settings.Load(out int viewMode, out float fov, out bool watermark,
+                out float smoothing, out int savedTimePreset, out bool rain, out float nearClip, out bool useF6))
+            {
+                showWatermark = watermark;
+                InputManager.instance.useF6ForTeleport = useF6;
+                timePreset = Mathf.Clamp(savedTimePreset, 0, timeNames.Length - 1);
+                raining = rain;
+
+                var cc = CameraController.Instance;
+                cc.fpv = viewMode == 0;
+                cc.fp = viewMode == 1;
+                cc.tpv = viewMode == 2;
+                cc.smoothing = smoothing;
+                cc.TabletCamera.fieldOfView = fov;
+                cc.ThirdPersonCamera.fieldOfView = fov;
+                cc.TabletCamera.nearClipPlane = nearClip;
+                cc.ThirdPersonCamera.nearClipPlane = nearClip;
+
+                if (cc.FovText != null) cc.FovText.text = fov.ToString("F0");
+                if (cc.SmoothText != null) cc.SmoothText.text = smoothing.ToString("F2");
+                if (cc.NearClipText != null) cc.NearClipText.text = nearClip.ToString("F2");
+
+                if (!ApplyTime())
+                    pendingTimeWeather = true;
+                else
+                    ApplyWeather();
+
+                if (viewMode != 0)
+                {
+                    foreach (MeshRenderer mr in cc.meshRenderers)
+                        mr.enabled = true;
+                    cc.MainPage.active = true;
+                }
+            }
+        }
+
+        bool ApplyTime()
+        {
+            if (dayNightManager == null)
+                dayNightManager = BetterDayNightManager.instance;
+            if (dayNightManager == null)
+                return false;
+            dayNightManager.SetTimeOfDay(timeIndices[timePreset]);
+            return true;
+        }
+
+        void ApplyWeather()
+        {
+            if (dayNightManager == null)
+                dayNightManager = BetterDayNightManager.instance;
+            if (dayNightManager == null)
+                return;
+            if (raining)
+                dayNightManager.SetFixedWeather(BetterDayNightManager.WeatherType.Raining);
+            else
+                dayNightManager.ClearFixedWeather();
+        }
+
+        int GetCurrentViewMode()
+        {
+            var cc = CameraController.Instance;
+            if (cc.fpv) return 0;
+            if (cc.fp) return 1;
+            if (cc.tpv) return 2;
+            return 0;
+        }
+
+        float enforceTimer;
+        void Update()
+        {
+            if (pendingTimeWeather)
+            {
+                if (ApplyTime())
+                {
+                    ApplyWeather();
+                    pendingTimeWeather = false;
+                }
+            }
+
+            enforceTimer += Time.deltaTime;
+            if (enforceTimer >= 1f)
+            {
+                enforceTimer = 0f;
+                ApplyTime();
+            }
+        }
+        Texture2D MakeRoundedRect(int w, int h, int radius, Color fill, Color outline, int border)
+        {
+            Texture2D tex = new Texture2D(w, h);
+            Color clear = new Color(0, 0, 0, 0);
+            for (int px = 0; px < w; px++)
+            {
+                for (int py = 0; py < h; py++)
+                {
+                    float dx = 0, dy = 0;
+                    if (px < radius) dx = radius - px;
+                    else if (px > w - radius - 1) dx = px - (w - radius - 1);
+                    if (py < radius) dy = radius - py;
+                    else if (py > h - radius - 1) dy = py - (h - radius - 1);
+
+                    float dist = dx * dx + dy * dy;
+                    float outerR = radius;
+                    float innerR = radius - border;
+
+                    if (dx > 0 && dy > 0)
+                    {
+                        if (dist > outerR * outerR)
+                            tex.SetPixel(px, py, clear);
+                        else if (dist > innerR * innerR)
+                            tex.SetPixel(px, py, outline);
+                        else
+                            tex.SetPixel(px, py, fill);
+                    }
+                    else if (px < border || px >= w - border || py < border || py >= h - border)
+                        tex.SetPixel(px, py, outline);
+                    else
+                        tex.SetPixel(px, py, fill);
+                }
+            }
+            tex.Apply();
+            return tex;
+        }
+
         void OnGUI()
         {
+            if (darkBg == null)
+                darkBg = MakeRoundedRect(64, 64, 12, new Color(0.08f, 0.08f, 0.08f, 0.85f), new Color(0f, 0f, 0f, 1f), 2);
+            if (boxStyle == null)
+            {
+                boxStyle = new GUIStyle();
+                boxStyle.normal.background = darkBg;
+                boxStyle.normal.textColor = Color.white;
+                boxStyle.fontSize = 14;
+                boxStyle.fontStyle = FontStyle.Bold;
+                boxStyle.alignment = TextAnchor.UpperCenter;
+                boxStyle.border = new RectOffset(13, 13, 13, 13);
+                boxStyle.padding = new RectOffset(4, 4, 4, 4);
+            }
+
             if (uiopen)
             {
-                GUI.Box(new Rect(30f, 50f, 170f, 270f), "Yizzi's Camera Mod");
-                if (GUI.Button(new Rect(35f, 70f, 160f, 20f), "FreeCam"))
+                float y = 50f;
+                float sp = 26f;
+                float boxHeight = 440f;
+                if (specOffsetOpen) boxHeight += 40f;
+
+                GUI.Box(new Rect(25f, y, 185f, boxHeight), "Yizzi's Camera Mod", boxStyle);
+                y += 24f;
+
+                if (GUI.Button(new Rect(35f, y, 165f, 22f), "FreeCam"))
                 {
-                    if (spectating)
-                    {
-                        spectating = false;
-                        followobject = null;
-                    }
+                    if (spectating) { spectating = false; followobject = null; }
                     if (freecam)
-                    {
                         CameraController.Instance.CameraTablet.transform.position = Player.Instance.headCollider.transform.position + Player.Instance.headCollider.transform.forward;
-                    }
                     if (!CameraController.Instance.flipped)
                     {
                         CameraController.Instance.flipped = true;
                         CameraController.Instance.ThirdPersonCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
                         CameraController.Instance.TabletCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
-                        CameraController.Instance.FakeWebCam.transform.Rotate(-180f, 180f, 0.0f);
                     }
                     CameraController.Instance.fpv = false;
                     CameraController.Instance.fp = false;
                     CameraController.Instance.tpv = false;
                     freecam = !freecam;
                 }
-                if (GUI.Button(new Rect(35f, 90f, 100f, 20f), "Spectator"))
+                y += sp;
+
+                if (GUI.Button(new Rect(35f, y, 108f, 22f), "Spectator"))
                 {
-                    if (!freecam)
-                    {
-                        if (PhotonNetwork.InRoom)
-                        {
-                            specui = !specui;
-                        }
-                    }
+                    if (!freecam && PhotonNetwork.InRoom) specui = !specui;
                     CameraController.Instance.fpv = false;
                     CameraController.Instance.fp = false;
                     CameraController.Instance.tpv = false;
                 }
-                if (GUI.Button(new Rect(140f, 90f, 45f, 20f), "Stop"))
+                if (GUI.Button(new Rect(148f, y, 52f, 22f), "Stop"))
                 {
-                    if (spectating)
-                    {
-                        followobject = null;
-                        CameraController.Instance.CameraTablet.transform.position = Player.Instance.headCollider.transform.position + Player.Instance.headCollider.transform.forward;
-                        spectating = false;
-                    }
+                    if (spectating) { followobject = null; CameraController.Instance.CameraTablet.transform.position = Player.Instance.headCollider.transform.position + Player.Instance.headCollider.transform.forward; spectating = false; }
                 }
-                if (GUI.Button(new Rect(35f, 110f, 160f, 20f), "Load All Maps(PRIVS)"))
-                {
-                    if (!PhotonNetwork.CurrentRoom.IsVisible)
-                    {
-                        forest.SetActive(true);
-                        cave.SetActive(true);
-                        canyon.SetActive(true);
-                        beach.SetActive(true);
-                        beachthing.SetActive(true);
-                        city.SetActive(true);
-                        mountain.SetActive(true);
-                        basement.SetActive(true);
-                        clouds.SetActive(true);
-                        cloudsbottom.SetActive(false);
-                        citybuildings.SetActive(false);
-                    }
-                }
+                y += sp;
+
                 if (specui)
                 {
                     int i = 1;
@@ -129,17 +257,13 @@ namespace YizziCamModV2.Comps
                             GUI.Label(new Rect(250, 20 + (i * 25), 160, 20), player.playerText1 != null ? player.playerText1.text : "Unknown");
                             if (GUI.Button(new Rect(360, 20 + (i * 25), 67, 20), "Spectate"))
                             {
-                                followobject = player.gameObject;
-                                spectating = true;
-                                CameraController.Instance.fp = false;
-                                CameraController.Instance.fpv = false;
-                                CameraController.Instance.tpv = false;
+                                followobject = player.gameObject; spectating = true;
+                                CameraController.Instance.fp = false; CameraController.Instance.fpv = false; CameraController.Instance.tpv = false;
                                 if (CameraController.Instance.flipped)
                                 {
                                     CameraController.Instance.flipped = false;
                                     CameraController.Instance.ThirdPersonCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
                                     CameraController.Instance.TabletCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
-                                    CameraController.Instance.FakeWebCam.transform.Rotate(-180f, 180f, 0.0f);
                                 }
                             }
                         }
@@ -147,34 +271,96 @@ namespace YizziCamModV2.Comps
                     }
                 }
 
-                controllerfreecam = GUI.Toggle(new Rect(30f, 130f, 160f, 19f), controllerfreecam, "Controller Freecam");
-                controloffset = GUI.Toggle(new Rect(30f, 150f, 170f, 19f), controloffset, "Control Offset with WASD");
-                speclookat = GUI.Toggle(new Rect(30f, 170f, 170f, 19f), speclookat, "Spectator Stare");
-                GUI.Label(new Rect(35f, 188f, 160f, 30f), "         Spectator Offset:");
-                GUI.Label(new Rect(35f, 200f, 160f, 30f), "     X            Y            Z");
-                specoffset.x = GUI.HorizontalSlider(new Rect(35f, 215f, 50f, 20f), specoffset.x, -3, 3);
-                specoffset.y = GUI.HorizontalSlider(new Rect(90f, 215f, 50f, 20f), specoffset.y, -3, 3);
-                specoffset.z = GUI.HorizontalSlider(new Rect(145f, 215f, 50f, 20f), specoffset.z, -3, 3);
+                controllerfreecam = GUI.Toggle(new Rect(30f, y, 170f, 20f), controllerfreecam, "Controller Freecam");
+                y += sp;
+                controloffset = GUI.Toggle(new Rect(30f, y, 175f, 20f), controloffset, "Control Offset with WASD");
+                y += sp;
+                speclookat = GUI.Toggle(new Rect(30f, y, 175f, 20f), speclookat, "Spectator Stare");
+                y += sp;
 
-                GUI.Label(new Rect(35f, 232f, 160f, 30f), "          Freecam Speed");
-                freecamspeed = GUI.HorizontalSlider(new Rect(35f, 250f, 160f, 5f), freecamspeed, 0.01f, 0.4f);
-                GUI.Label(new Rect(35f, 258f, 160f, 20f), "0                0.5               1");
-                GUI.Label(new Rect(35f, 275f, 160f, 30f), "          Freecam Sens");
-                freecamsens = GUI.HorizontalSlider(new Rect(35f, 293f, 160f, 5f), freecamsens, 0.01f, 2f);
-                GUI.Label(new Rect(35f, 301f, 160f, 20f), "0                0.5               1");
+                if (GUI.Button(new Rect(35f, y, 165f, 22f), specOffsetOpen ? "-- Spectator Offset" : "++ Spectator Offset"))
+                    specOffsetOpen = !specOffsetOpen;
+                y += sp;
 
-                if (!PhotonNetwork.InRoom)
+                if (specOffsetOpen)
                 {
-                    specui = false;
-                    followobject = null;
+                    GUI.Label(new Rect(35f, y, 165f, 20f), "     X            Y            Z");
+                    y += 16f;
+                    specoffset.x = GUI.HorizontalSlider(new Rect(35f, y, 50f, 20f), specoffset.x, -3, 3);
+                    specoffset.y = GUI.HorizontalSlider(new Rect(90f, y, 50f, 20f), specoffset.y, -3, 3);
+                    specoffset.z = GUI.HorizontalSlider(new Rect(145f, y, 50f, 20f), specoffset.z, -3, 3);
+                    y += 24f;
                 }
+
+                GUI.Label(new Rect(35f, y, 165f, 20f), "          Freecam Speed");
+                y += 16f;
+                freecamspeed = GUI.HorizontalSlider(new Rect(35f, y, 165f, 15f), freecamspeed, 0.01f, 0.4f);
+                y += 20f;
+
+                GUI.Label(new Rect(35f, y, 165f, 20f), "          Freecam Sens");
+                y += 16f;
+                freecamsens = GUI.HorizontalSlider(new Rect(35f, y, 165f, 15f), freecamsens, 0.01f, 2f);
+                y += 20f;
+
+                showWatermark = GUI.Toggle(new Rect(30f, y, 175f, 20f), showWatermark, "Show Watermark");
+                y += sp;
+
+                bool useF6 = InputManager.instance.useF6ForTeleport;
+                if (GUI.Button(new Rect(35f, y, 165f, 22f), "Summon Key: " + (useF6 ? "F6" : "X/Y")))
+                    InputManager.instance.useF6ForTeleport = !useF6;
+                y += sp;
+
+                GUI.Label(new Rect(35f, y, 165f, 20f), "  Time: " + timeNames[timePreset]);
+                y += 18f;
+                float tw = 165f / timeNames.Length - 2f;
+                for (int t = 0; t < timeNames.Length; t++)
+                {
+                    if (GUI.Button(new Rect(35f + t * (tw + 2f), y, tw, 22f), timeNames[t]))
+                    {
+                        timePreset = t;
+                        ApplyTime();
+                    }
+                }
+                y += sp;
+
+                if (GUI.Button(new Rect(35f, y, 165f, 22f), raining ? "Clear Rain" : "Rain"))
+                {
+                    raining = !raining;
+                    ApplyWeather();
+                }
+                y += sp + 2f;
+
+                if (GUI.Button(new Rect(35f, y, 165f, 22f), "Save Settings"))
+                {
+                    Settings.Save(
+                        GetCurrentViewMode(),
+                        CameraController.Instance.TabletCamera.fieldOfView,
+                        showWatermark,
+                        CameraController.Instance.smoothing,
+                        timePreset,
+                        raining,
+                        CameraController.Instance.ThirdPersonCamera.nearClipPlane,
+                        InputManager.instance.useF6ForTeleport
+                    );
+                }
+
+                if (!PhotonNetwork.InRoom) { specui = false; followobject = null; }
             }
+            if (showWatermark)
+            {
+                if (watermarkStyle == null)
+                {
+                    watermarkStyle = new GUIStyle(GUI.skin.label);
+                    watermarkStyle.fontSize = 16;
+                    watermarkStyle.fontStyle = FontStyle.Bold;
+                    watermarkStyle.normal.textColor = new Color(1f, 1f, 1f, 0.2f);
+                }
+                GUI.Label(new Rect(10f, Screen.height - 30f, 300f, 25f), "YizziCamModReimagined", watermarkStyle);
+            }
+
             if (Keyboard.current.tabKey.isPressed)
             {
-                if (!keyp)
-                {
-                    uiopen = !uiopen;
-                }
+                if (!keyp) uiopen = !uiopen;
                 keyp = true;
             }
             else

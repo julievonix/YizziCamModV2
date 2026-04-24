@@ -20,7 +20,6 @@ namespace YizziCamModV2
         public GameObject CMVirtualCameraGO;
         public GameObject LeftHandGO;
         public GameObject RightHandGO;
-        public GameObject FakeWebCam;
         public GameObject TabletCameraGO;
         public GameObject MainPage;
         public GameObject MiscPage;
@@ -86,7 +85,7 @@ namespace YizziCamModV2
             CameraFollower = GameObject.Find("Player Objects/Player VR Controller/GorillaPlayer/TurnParent/Main Camera/Camera Follower");
             TabletCameraGO = GameObject.Find("CameraTablet(Clone)/Camera");
             TabletCamera = TabletCameraGO.GetComponent<Camera>();
-            FakeWebCam = GameObject.Find("CameraTablet(Clone)/FakeCamera");
+            Destroy(GameObject.Find("CameraTablet(Clone)/FakeCamera"));
             LeftGrabCol = GameObject.Find("CameraTablet(Clone)/LeftGrabCol");
             RightGrabCol = GameObject.Find("CameraTablet(Clone)/RightGrabCol");
             LeftGrabCol.AddComponent<LeftGrabTrigger>();
@@ -144,7 +143,6 @@ namespace YizziCamModV2
             ScreenMats.Add(GameObject.Find("ColorScreen(Clone)/Screen1").GetComponent<MeshRenderer>().material);
             ScreenMats.Add(GameObject.Find("ColorScreen(Clone)/Screen2").GetComponent<MeshRenderer>().material);
             ScreenMats.Add(GameObject.Find("ColorScreen(Clone)/Screen3").GetComponent<MeshRenderer>().material);
-            meshRenderers.Add(GameObject.Find("CameraTablet(Clone)/FakeCamera").GetComponent<MeshRenderer>());
             meshRenderers.Add(GameObject.Find("CameraTablet(Clone)/Tablet").GetComponent<MeshRenderer>());
             meshRenderers.Add(GameObject.Find("CameraTablet(Clone)/Handle").GetComponent<MeshRenderer>());
             meshRenderers.Add(GameObject.Find("CameraTablet(Clone)/Handle2").GetComponent<MeshRenderer>());
@@ -154,7 +152,13 @@ namespace YizziCamModV2
             MiscPage.SetActive(false);
             ThirdPersonCamera.nearClipPlane = 0.1f;
             TabletCamera.nearClipPlane = 0.1f;
-            FakeWebCam.transform.Rotate(-180, 180, 0);
+            ReplaceAtlasTexture();
+            fpv = true;
+            foreach (MeshRenderer mr in meshRenderers)
+            {
+                mr.enabled = false;
+            }
+            MainPage.active = false;
             init = true;
         }
 
@@ -181,7 +185,7 @@ namespace YizziCamModV2
                     CameraTablet.transform.position = CameraFollower.transform.position;
                     CameraTablet.transform.rotation = Quaternion.Lerp(CameraTablet.transform.rotation, CameraFollower.transform.rotation, smoothing);
                 }
-                if (InputManager.instance.LeftPrimaryButton && CameraTablet.transform.parent == null)
+                if (InputManager.instance.TeleportCamera && CameraTablet.transform.parent == null)
                 {
                     fp = false;
                     fpv = false;
@@ -209,7 +213,6 @@ namespace YizziCamModV2
                         flipped = true;
                         ThirdPersonCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
                         TabletCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
-                        FakeWebCam.transform.Rotate(-180f, 180f, 0.0f);
                     }
                     dist = Vector3.Distance(CameraFollower.transform.position, CameraTablet.transform.position);
                     if (dist > minDist)
@@ -253,7 +256,7 @@ namespace YizziCamModV2
                         CameraTablet.transform.position = Vector3.SmoothDamp(CameraTablet.transform.position, targetPosition, ref velocity, 0.1f);
                         CameraTablet.transform.LookAt(2f * CameraTablet.transform.position - CameraFollower.transform.position);
                     }
-                    if (InputManager.instance.LeftPrimaryButton)
+                    if (InputManager.instance.TeleportCamera)
                     {
                         CameraTablet.transform.position = Player.Instance.headCollider.transform.position + Player.Instance.headCollider.transform.forward;
                         foreach (MeshRenderer mr in meshRenderers)
@@ -274,6 +277,37 @@ namespace YizziCamModV2
             asb.Unload(false);
             str.Close();
             return go;
+        }
+
+        void ReplaceAtlasTexture()
+        {
+            Stream str = Assembly.GetExecutingAssembly().GetManifestResourceStream("YizziCamModV2.Assets.Atlas");
+            byte[] data;
+            using (MemoryStream ms = new MemoryStream())
+            {
+                str.CopyTo(ms);
+                data = ms.ToArray();
+            }
+            str.Close();
+
+            Texture2D customAtlas = new Texture2D(2, 2);
+            ImageConversion.LoadImage(customAtlas, data);
+
+            Renderer[] allRenderers = FindObjectsOfType<Renderer>(true);
+            foreach (Renderer renderer in allRenderers)
+            {
+                foreach (Material mat in renderer.sharedMaterials)
+                {
+                    if (mat != null && mat.HasProperty("_MainTex"))
+                    {
+                        Texture tex = mat.mainTexture;
+                        if (tex != null && tex.name.ToLower().Contains("atlas"))
+                        {
+                            mat.mainTexture = customAtlas;
+                        }
+                    }
+                }
+            }
         }
     }
 }

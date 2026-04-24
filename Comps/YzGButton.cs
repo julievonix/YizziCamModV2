@@ -63,7 +63,6 @@ namespace YizziCamModV2.Comps
                                 CameraController.Instance.flipped = false;
                                 CameraController.Instance.ThirdPersonCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
                                 CameraController.Instance.TabletCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
-                                CameraController.Instance.FakeWebCam.transform.Rotate(-180f, 180f, 0.0f);
                             }
                         }
                         else if (CameraController.Instance.TPVMode == CameraController.TPVModes.FRONT)
@@ -73,7 +72,6 @@ namespace YizziCamModV2.Comps
                                 CameraController.Instance.flipped = true;
                                 CameraController.Instance.ThirdPersonCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
                                 CameraController.Instance.TabletCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
-                                CameraController.Instance.FakeWebCam.transform.Rotate(-180f, 180f, 0.0f);
                             }
                         }
                         CameraController.Instance.fp = false;
@@ -86,7 +84,6 @@ namespace YizziCamModV2.Comps
                             CameraController.Instance.flipped = false;
                             CameraController.Instance.ThirdPersonCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
                             CameraController.Instance.TabletCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
-                            CameraController.Instance.FakeWebCam.transform.Rotate(-180f, 180f, 0.0f);
                         }
                         CameraController.Instance.fp = false;
                         CameraController.Instance.fpv = true;
@@ -95,7 +92,6 @@ namespace YizziCamModV2.Comps
                         CameraController.Instance.flipped = !CameraController.Instance.flipped;
                         CameraController.Instance.ThirdPersonCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
                         CameraController.Instance.TabletCameraGO.transform.Rotate(0.0f, 180f, 0.0f);
-                        CameraController.Instance.FakeWebCam.transform.Rotate(-180f, 180f, 0.0f);
                         break;
                     case "FovDown":
                         CameraController.Instance.TabletCamera.fieldOfView -= 5f;

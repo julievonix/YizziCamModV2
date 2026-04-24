@@ -1,19 +1,19 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
-using UnityEngine.XR;
 
 namespace YizziCamModV2.Comps
 {
     public class InputManager : MonoBehaviour
     {
         public static InputManager instance;
-        private XRNode lHandNode = XRNode.LeftHand;
-        private XRNode rHandNode = XRNode.RightHand;
         public bool LeftGrip;
         public bool RightGrip;
-        public bool LeftPrimaryButton; // x
+        public bool LeftTrigger;
+        public bool RightTrigger;
+        public bool LeftPrimaryButton;
         public bool RightPrimaryButton;
-        // gamepad
+        public bool TeleportCamera;
+        public bool useF6ForTeleport = true;
         public Vector2 GPLeftStick;
         public Vector2 GPRightStick;
 
@@ -27,6 +27,11 @@ namespace YizziCamModV2.Comps
             RightGrip = ControllerInputPoller.instance.rightGrab;
             LeftPrimaryButton = ControllerInputPoller.instance.leftControllerPrimaryButton;
             RightPrimaryButton = ControllerInputPoller.instance.rightControllerPrimaryButton;
+            LeftTrigger = ControllerInputPoller.instance.leftControllerIndexFloat > 0.5f;
+            RightTrigger = ControllerInputPoller.instance.rightControllerIndexFloat > 0.5f;
+            TeleportCamera = useF6ForTeleport
+                ? Keyboard.current.f6Key.isPressed
+                : ControllerInputPoller.instance.leftControllerPrimaryButton;
 
             if (Gamepad.current != null)
             {

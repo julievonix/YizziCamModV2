@@ -77,6 +77,14 @@
       <HintPath>$(ManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(ManagedDir)\UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(ManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Unity packages (renamed in Unity 6) -->
@@ -118,6 +126,9 @@
     </EmbeddedResource>
     <EmbeddedResource Include="..\Assets\YizziCamModV2.Assets.yizzicam">
       <LogicalName>YizziCamModV2.Assets.yizzicam</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\Assets\Atlas.png">
+      <LogicalName>YizziCamModV2.Assets.Atlas</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 

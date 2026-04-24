@@ -10,15 +10,16 @@ namespace YizziCamModV2.Comps
         }
         void OnTriggerStay(Collider col)
         {
+            bool holding = InputManager.instance.RightGrip || InputManager.instance.RightTrigger;
             if (col.name.Contains("Right"))
             {
-                if (InputManager.instance.RightGrip & !CameraController.Instance.fpv)
+                if (holding & !CameraController.Instance.fpv)
                 {
                     CameraController.Instance.CameraTablet.transform.parent = CameraController.Instance.RightHandGO.transform;
                     if (CameraController.Instance.fp) { CameraController.Instance.fp = false; }
                 }
             }
-            if (!InputManager.instance.RightGrip & CameraController.Instance.CameraTablet.transform.parent == CameraController.Instance.RightHandGO.transform)
+            if (!holding & CameraController.Instance.CameraTablet.transform.parent == CameraController.Instance.RightHandGO.transform)
             {
                 CameraController.Instance.CameraTablet.transform.parent = null;
             }
