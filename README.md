@@ -2,7 +2,7 @@
 
 Camera Mod with in game UI!
 
-![](https://github.com/Yizzii/YizziCamModV2/blob/main/cammod.gif)
+![](cammod.gif)
 
 ### *Features:*
 * Monitor UI (tab to enable, shitty OnGUI but im lazy so cope)
