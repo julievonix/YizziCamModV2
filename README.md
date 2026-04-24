@@ -1,4 +1,4 @@
-# YizziCamModV2 												[![Github All Releases](https://img.shields.io/github/downloads/Yizzii/YizziCamModV2/total.svg)]() 
+# YizziCamModV3 												[![Github All Releases](https://img.shields.io/github/downloads/Yizzii/YizziCamModV2/total.svg)]() 
 
 Camera Mod with in game UI!
 
