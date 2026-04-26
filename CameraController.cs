@@ -28,6 +28,7 @@ namespace YizziCamModV2
         public GameObject CameraFollower;
         public GameObject TPVBodyFollower;
         public GameObject ColorScreenGO;
+        public GameObject FakeCameraGO;
         public List<GameObject> Buttons = new List<GameObject>();
         public List<GameObject> ColorButtons = new List<GameObject>();
         public List<Material> ScreenMats = new List<Material>();
@@ -53,6 +54,9 @@ namespace YizziCamModV2
         public bool tpv;
         public bool fpv;
         public bool fp;
+        public bool fpvRawRotation = false;
+        public bool fpvClipping = false;
+        public float fpvClipLag = 0.5f;
         public bool openedurl;
         public float minDist = 2f;
         float dist;
@@ -85,7 +89,8 @@ namespace YizziCamModV2
             CameraFollower = GameObject.Find("Player Objects/Player VR Controller/GorillaPlayer/TurnParent/Main Camera/Camera Follower");
             TabletCameraGO = GameObject.Find("CameraTablet(Clone)/Camera");
             TabletCamera = TabletCameraGO.GetComponent<Camera>();
-            Destroy(GameObject.Find("CameraTablet(Clone)/FakeCamera"));
+            FakeCameraGO = GameObject.Find("CameraTablet(Clone)/FakeCamera");
+            FakeCameraGO.transform.localPosition = new Vector3(0f, 0.55f, 0.1f);
             LeftGrabCol = GameObject.Find("CameraTablet(Clone)/LeftGrabCol");
             RightGrabCol = GameObject.Find("CameraTablet(Clone)/RightGrabCol");
             LeftGrabCol.AddComponent<LeftGrabTrigger>();
@@ -182,14 +187,22 @@ namespace YizziCamModV2
                         }
                         MainPage.active = false;
                     }
-                    CameraTablet.transform.position = CameraFollower.transform.position;
-                    CameraTablet.transform.rotation = Quaternion.Lerp(CameraTablet.transform.rotation, CameraFollower.transform.rotation, smoothing);
+                    if (FakeCameraGO.activeSelf) FakeCameraGO.SetActive(false);
+                    if (fpvClipping)
+                        CameraTablet.transform.position = Vector3.Lerp(CameraTablet.transform.position, CameraFollower.transform.position, fpvClipLag);
+                    else
+                        CameraTablet.transform.position = CameraFollower.transform.position;
+                    if (fpvRawRotation)
+                        CameraTablet.transform.rotation = CameraFollower.transform.rotation;
+                    else
+                        CameraTablet.transform.rotation = Quaternion.Lerp(CameraTablet.transform.rotation, CameraFollower.transform.rotation, smoothing);
                 }
                 if (InputManager.instance.TeleportCamera && CameraTablet.transform.parent == null)
                 {
                     fp = false;
                     fpv = false;
                     tpv = false;
+                    if (!FakeCameraGO.activeSelf) FakeCameraGO.SetActive(true);
                     if (!MainPage.active)
                     {
                         foreach (GameObject btns in Buttons)

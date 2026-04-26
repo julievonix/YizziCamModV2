@@ -8,7 +8,8 @@ namespace YizziCamModV2
         private static string FilePath => Path.Combine(Paths.ConfigPath, "YizziCamMod.cfg");
 
         public static void Save(int viewMode, float fov, bool watermark, float smoothing,
-            int timePreset, bool rain, float nearClip, bool useF6)
+            int timePreset, bool rain, float nearClip, bool useF6, bool fpvRawRotation,
+            bool fpvClipping, float fpvClipLag)
         {
             using (StreamWriter sw = new StreamWriter(FilePath))
             {
@@ -20,11 +21,15 @@ namespace YizziCamModV2
                 sw.WriteLine("rain=" + (rain ? "1" : "0"));
                 sw.WriteLine("nearClip=" + nearClip.ToString("F4"));
                 sw.WriteLine("useF6=" + (useF6 ? "1" : "0"));
+                sw.WriteLine("fpvRawRotation=" + (fpvRawRotation ? "1" : "0"));
+                sw.WriteLine("fpvClipping=" + (fpvClipping ? "1" : "0"));
+                sw.WriteLine("fpvClipLag=" + fpvClipLag.ToString("F4"));
             }
         }
 
         public static bool Load(out int viewMode, out float fov, out bool watermark,
-            out float smoothing, out int timePreset, out bool rain, out float nearClip, out bool useF6)
+            out float smoothing, out int timePreset, out bool rain, out float nearClip, out bool useF6,
+            out bool fpvRawRotation, out bool fpvClipping, out float fpvClipLag)
         {
             viewMode = 0;
             fov = 60f;
@@ -34,6 +39,9 @@ namespace YizziCamModV2
             rain = false;
             nearClip = 0.1f;
             useF6 = true;
+            fpvRawRotation = false;
+            fpvClipping = false;
+            fpvClipLag = 0.5f;
 
             if (!File.Exists(FilePath))
                 return false;
@@ -56,6 +64,9 @@ namespace YizziCamModV2
                     case "rain": rain = val == "1"; break;
                     case "nearClip": float.TryParse(val, out nearClip); break;
                     case "useF6": useF6 = val == "1"; break;
+                    case "fpvRawRotation": fpvRawRotation = val == "1"; break;
+                    case "fpvClipping": fpvClipping = val == "1"; break;
+                    case "fpvClipLag": float.TryParse(val, out fpvClipLag); break;
                 }
             }
             return true;

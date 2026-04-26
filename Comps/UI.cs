@@ -68,7 +68,8 @@ namespace YizziCamModV2.Comps
         void LoadSettings()
         {
             if (Settings.Load(out int viewMode, out float fov, out bool watermark,
-                out float smoothing, out int savedTimePreset, out bool rain, out float nearClip, out bool useF6))
+                out float smoothing, out int savedTimePreset, out bool rain, out float nearClip, out bool useF6,
+                out bool fpvRawRotation, out bool fpvClipping, out float fpvClipLag))
             {
                 showWatermark = watermark;
                 InputManager.instance.useF6ForTeleport = useF6;
@@ -80,6 +81,9 @@ namespace YizziCamModV2.Comps
                 cc.fp = viewMode == 1;
                 cc.tpv = viewMode == 2;
                 cc.smoothing = smoothing;
+                cc.fpvRawRotation = fpvRawRotation;
+                cc.fpvClipping = fpvClipping;
+                cc.fpvClipLag = fpvClipLag;
                 cc.TabletCamera.fieldOfView = fov;
                 cc.ThirdPersonCamera.fieldOfView = fov;
                 cc.TabletCamera.nearClipPlane = nearClip;
@@ -210,8 +214,9 @@ namespace YizziCamModV2.Comps
             {
                 float y = 50f;
                 float sp = 26f;
-                float boxHeight = 440f;
+                float boxHeight = 492f;
                 if (specOffsetOpen) boxHeight += 40f;
+                if (CameraController.Instance.fpvClipping) boxHeight += 36f;
 
                 GUI.Box(new Rect(25f, y, 185f, boxHeight), "Yizzi's Camera Mod", boxStyle);
                 y += 24f;
@@ -304,6 +309,17 @@ namespace YizziCamModV2.Comps
 
                 showWatermark = GUI.Toggle(new Rect(30f, y, 175f, 20f), showWatermark, "Show Watermark");
                 y += sp;
+                CameraController.Instance.fpvRawRotation = GUI.Toggle(new Rect(30f, y, 175f, 20f), CameraController.Instance.fpvRawRotation, "FPV Raw Rotation");
+                y += sp;
+                CameraController.Instance.fpvClipping = GUI.Toggle(new Rect(30f, y, 175f, 20f), CameraController.Instance.fpvClipping, "FPV Camera Clipping");
+                y += sp;
+                if (CameraController.Instance.fpvClipping)
+                {
+                    GUI.Label(new Rect(35f, y, 165f, 20f), "       Clip Lag: " + CameraController.Instance.fpvClipLag.ToString("F2"));
+                    y += 16f;
+                    CameraController.Instance.fpvClipLag = GUI.HorizontalSlider(new Rect(35f, y, 165f, 15f), CameraController.Instance.fpvClipLag, 0.05f, 0.95f);
+                    y += 20f;
+                }
 
                 bool useF6 = InputManager.instance.useF6ForTeleport;
                 if (GUI.Button(new Rect(35f, y, 165f, 22f), "Summon Key: " + (useF6 ? "F6" : "X/Y")))
@@ -340,7 +356,10 @@ namespace YizziCamModV2.Comps
                         timePreset,
                         raining,
                         CameraController.Instance.ThirdPersonCamera.nearClipPlane,
-                        InputManager.instance.useF6ForTeleport
+                        InputManager.instance.useF6ForTeleport,
+                        CameraController.Instance.fpvRawRotation,
+                        CameraController.Instance.fpvClipping,
+                        CameraController.Instance.fpvClipLag
                     );
                 }
 
