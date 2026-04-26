@@ -15,6 +15,7 @@ Camera Mod with in game UI!
 * Green Screen (in city)
 * Adjustable FOV, Nearclip and smoothing
 * Weather and Time control (In Tab Menu)
+* Camera Clipping Slider (controll how much the camera clips through the player rig. Original Yizzi look is 0.40)
 * Save settings Button (FOV,PV, etc.) (In tab Menu)
 
 ### *Controls:*
