@@ -29,16 +29,17 @@ namespace YizziCamModV2.Comps
         bool controllerfreecam;
         bool speclookat;
         bool controloffset;
-        bool showWatermark = true;
+        public bool showWatermark = true;
         bool specOffsetOpen;
-        bool raining;
-        int timePreset = 1;
+        public bool raining;
+        public int timePreset = 1;
         bool pendingTimeWeather;
         GUIStyle watermarkStyle;
         GameObject followobject;
         BetterDayNightManager dayNightManager;
         static readonly string[] timeNames = { "Dawn", "Day", "Night Fall", "Night", "Midnight" };
         static readonly int[] timeIndices = { 1, 3, 6, 0, 8 };
+        static readonly string[] SummonInputLabels = { "F6", "X/Y (L face)", "Custom" };
         Texture2D darkBg;
         GUIStyle boxStyle;
         float freecamspeed = 0.1f;
@@ -68,11 +69,11 @@ namespace YizziCamModV2.Comps
         void LoadSettings()
         {
             if (Settings.Load(out int viewMode, out float fov, out bool watermark,
-                out float smoothing, out int savedTimePreset, out bool rain, out float nearClip, out bool useF6,
+                out float smoothing, out int savedTimePreset, out bool rain, out float nearClip, out int summonInputMode,
                 out bool fpvRawRotation, out bool fpvClipping, out float fpvClipLag))
             {
                 showWatermark = watermark;
-                InputManager.instance.useF6ForTeleport = useF6;
+                InputManager.instance.summonInputMode = summonInputMode;
                 timePreset = Mathf.Clamp(savedTimePreset, 0, timeNames.Length - 1);
                 raining = rain;
 
@@ -321,9 +322,20 @@ namespace YizziCamModV2.Comps
                     y += 20f;
                 }
 
-                bool useF6 = InputManager.instance.useF6ForTeleport;
-                if (GUI.Button(new Rect(35f, y, 165f, 22f), "Summon Key: " + (useF6 ? "F6" : "X/Y")))
-                    InputManager.instance.useF6ForTeleport = !useF6;
+                int sMode = InputManager.instance.summonInputMode;
+                if (sMode < 0 || sMode > 2) sMode = 0;
+                string sumLabel = sMode == 2 && InputManager.instance.waitingForCustomBind
+                    ? "Summon: PRESS ANY..."
+                    : "Summon: " + SummonInputLabels[sMode];
+                if (GUI.Button(new Rect(35f, y, 165f, 22f), sumLabel))
+                {
+                    int next = (sMode + 1) % 3;
+                    InputManager.instance.summonInputMode = next;
+                    if (next == 2)
+                        InputManager.instance.waitingForCustomBind = true;
+                    else
+                        InputManager.instance.waitingForCustomBind = false;
+                }
                 y += sp;
 
                 GUI.Label(new Rect(35f, y, 165f, 20f), "  Time: " + timeNames[timePreset]);
@@ -356,7 +368,7 @@ namespace YizziCamModV2.Comps
                         timePreset,
                         raining,
                         CameraController.Instance.ThirdPersonCamera.nearClipPlane,
-                        InputManager.instance.useF6ForTeleport,
+                        InputManager.instance.summonInputMode,
                         CameraController.Instance.fpvRawRotation,
                         CameraController.Instance.fpvClipping,
                         CameraController.Instance.fpvClipLag

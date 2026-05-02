@@ -8,7 +8,7 @@ namespace YizziCamModV2
         private static string FilePath => Path.Combine(Paths.ConfigPath, "YizziCamMod.cfg");
 
         public static void Save(int viewMode, float fov, bool watermark, float smoothing,
-            int timePreset, bool rain, float nearClip, bool useF6, bool fpvRawRotation,
+            int timePreset, bool rain, float nearClip, int summonInputMode, bool fpvRawRotation,
             bool fpvClipping, float fpvClipLag)
         {
             using (StreamWriter sw = new StreamWriter(FilePath))
@@ -20,7 +20,7 @@ namespace YizziCamModV2
                 sw.WriteLine("timePreset=" + timePreset);
                 sw.WriteLine("rain=" + (rain ? "1" : "0"));
                 sw.WriteLine("nearClip=" + nearClip.ToString("F4"));
-                sw.WriteLine("useF6=" + (useF6 ? "1" : "0"));
+                sw.WriteLine("summonMode=" + summonInputMode);
                 sw.WriteLine("fpvRawRotation=" + (fpvRawRotation ? "1" : "0"));
                 sw.WriteLine("fpvClipping=" + (fpvClipping ? "1" : "0"));
                 sw.WriteLine("fpvClipLag=" + fpvClipLag.ToString("F4"));
@@ -28,7 +28,7 @@ namespace YizziCamModV2
         }
 
         public static bool Load(out int viewMode, out float fov, out bool watermark,
-            out float smoothing, out int timePreset, out bool rain, out float nearClip, out bool useF6,
+            out float smoothing, out int timePreset, out bool rain, out float nearClip, out int summonInputMode,
             out bool fpvRawRotation, out bool fpvClipping, out float fpvClipLag)
         {
             viewMode = 0;
@@ -38,7 +38,9 @@ namespace YizziCamModV2
             timePreset = 1;
             rain = false;
             nearClip = 0.1f;
-            useF6 = true;
+            summonInputMode = 0;
+            bool? legacyUseF6 = null;
+            bool parsedSummonMode = false;
             fpvRawRotation = false;
             fpvClipping = false;
             fpvClipLag = 0.5f;
@@ -63,12 +65,23 @@ namespace YizziCamModV2
                     case "timePreset": int.TryParse(val, out timePreset); break;
                     case "rain": rain = val == "1"; break;
                     case "nearClip": float.TryParse(val, out nearClip); break;
-                    case "useF6": useF6 = val == "1"; break;
+                    case "useF6": legacyUseF6 = val == "1"; break;
+                    case "summonMode":
+                        if (int.TryParse(val, out int sm))
+                        {
+                            summonInputMode = sm;
+                            parsedSummonMode = true;
+                        }
+                        break;
                     case "fpvRawRotation": fpvRawRotation = val == "1"; break;
                     case "fpvClipping": fpvClipping = val == "1"; break;
                     case "fpvClipLag": float.TryParse(val, out fpvClipLag); break;
                 }
             }
+            if (!parsedSummonMode && legacyUseF6.HasValue)
+                summonInputMode = legacyUseF6.Value ? 0 : 1;
+            if (summonInputMode < 0 || summonInputMode > 2)
+                summonInputMode = 0;
             return true;
         }
     }

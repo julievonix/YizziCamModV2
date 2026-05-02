@@ -15,8 +15,9 @@ Camera Mod with in game UI!
 * Green Screen (in city)
 * Adjustable FOV, Nearclip and smoothing
 * Weather and Time control (In Tab Menu)
-* Camera Clipping Slider (controll how much the camera clips through the player rig. Original Yizzi look is 0.40)
+* Camera Clipping Slider (controll how much the camera clips through the player rig. Original Yizzi look is 0.40) 
 * Save settings Button (FOV,PV, etc.) (In tab Menu)
+
 
 ### *Controls:*
 * disable first person view by pressing X/Y or F6 on keyboard
@@ -31,4 +32,4 @@ Camera Mod with in game UI!
 
 * **controls can be different depending what you're playing on(steamvr,oculuspcvr,index, etc.)**
 
-* **if you find any bugs don't report them to @yizzi. on discord**
+* **if you find any bugs don report them to null**
