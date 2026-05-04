@@ -13,6 +13,7 @@
     <GameDir>C:\Program Files (x86)\Steam\steamapps\common\Gorilla Tag</GameDir>
     <ManagedDir>$(GameDir)\Gorilla Tag_Data\Managed</ManagedDir>
     <BepInExDir>$(GameDir)\BepInEx\core</BepInExDir>
+    <BepInExPluginsDir>$(GameDir)\BepInEx\plugins</BepInExPluginsDir>
   </PropertyGroup>
 
   <!-- BepInEx + Harmony -->
@@ -139,5 +140,25 @@
       <LogicalName>YizziCamModV2.Assets.Atlas</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
+
+  <PropertyGroup>
+    <DeployToBepInExPlugins Condition="'$(DeployToBepInExPlugins)' == ''">true</DeployToBepInExPlugins>
+  </PropertyGroup>
+
+  <!-- After each successful build → Gorilla Tag BepInEx\plugins ($(GameDir) must exist). -->
+  <!-- Turn off for this build: dotnet build -p:DeployToBepInExPlugins=false -->
+  <Target Name="DeployToBepInExPlugins" AfterTargets="Build" Condition="'$(DeployToBepInExPlugins)' != 'false'">
+    <Warning
+      Code="YIZZI7001"
+      Text="Deploy skipped: Gorilla Tag folder not found at &quot;$(GameDir)&quot;. Set GameDir in this .csproj or install the game."
+      Condition="!Exists('$(GameDir)')" />
+    <PropertyGroup Condition="Exists('$(GameDir)')">
+      <_YizziPdb>$(TargetDir)$(TargetName).pdb</_YizziPdb>
+    </PropertyGroup>
+    <MakeDir Directories="$(BepInExPluginsDir)" Condition="Exists('$(GameDir)')" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(BepInExPluginsDir)\$(TargetFileName)" SkipUnchangedFiles="false" Condition="Exists('$(GameDir)')" />
+    <Copy SourceFiles="$(_YizziPdb)" DestinationFolder="$(BepInExPluginsDir)" SkipUnchangedFiles="false" Condition="Exists('$(GameDir)') And Exists('$(_YizziPdb)')" />
+    <Message Importance="high" Text="YizziCamModV2 → $(BepInExPluginsDir)\$(TargetFileName)" Condition="Exists('$(GameDir)')" />
+  </Target>
 
 </Project>

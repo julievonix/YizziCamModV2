@@ -30,6 +30,10 @@ namespace YizziCamModV2
         public GameObject MainPage;
         public GameObject MiscPage;
         public GameObject ExtraPage;
+        public GameObject MainPinnedShortcutButton;
+        /// <summary>Main-page slot that shows PIN (empty) or the pinned Extra feature label; opens that feature or Extra when empty.</summary>
+        public GameObject MainPinSlotButton;
+        public bool MiscReturnToExtraInsteadOfMain;
         public GameObject WardrobePage;
         public GameObject WeatherTimePage;
         public Text WTRainStatusText;
@@ -53,6 +57,16 @@ namespace YizziCamModV2
         public List<GameObject> ColorButtons = new List<GameObject>();
         public List<Material> ScreenMats = new List<Material>();
         public List<MeshRenderer> meshRenderers = new List<MeshRenderer>();
+
+        const string ExtraPinPrefKey = "YizziExtraPin";
+
+        /// <summary>Gorilla-style UI tint (requested <c>rgb(251,254,13)</c> ≈ <c>hsl(61,83%,47%)</c>).</summary>
+        static readonly Color TabletLabelYellow = new Color(251f / 255f, 254f / 255f, 13f / 255f);
+
+        /// <summary>Extra / main tablet mesh button labels.</summary>
+        const int TabletWorldButtonFontSize = 27;
+
+        const int TabletPageTitleFontSize = 29;
 
         public Camera TabletCamera;
         public Camera FirstPersonCamera;
@@ -150,13 +164,39 @@ namespace YizziCamModV2
             Buttons.Add(GameObject.Find("CameraTablet(Clone)/MiscPage/MinDistUpButton"));
             Buttons.Add(GameObject.Find("CameraTablet(Clone)/MiscPage/SpeedDownButton"));
             Buttons.Add(GameObject.Find("CameraTablet(Clone)/MiscPage/SpeedUpButton"));
-            Buttons.Add(GameObject.Find("CameraTablet(Clone)/MiscPage/SpeedDownButton"));
             Buttons.Add(GameObject.Find("CameraTablet(Clone)/MiscPage/TPModeDownButton"));
             Buttons.Add(GameObject.Find("CameraTablet(Clone)/MiscPage/TPModeUpButton"));
             Buttons.Add(GameObject.Find("CameraTablet(Clone)/MiscPage/TPRotButton"));
             Buttons.Add(GameObject.Find("CameraTablet(Clone)/MiscPage/TPRotButton1"));
+
+            var miscSlotGo = GameObject.Find("CameraTablet(Clone)/MainPage/MiscButton");
+            var fpSlotGo = GameObject.Find("CameraTablet(Clone)/MainPage/FPButton");
+            Vector3 miscSlotPrefabLocal =
+                miscSlotGo != null ? miscSlotGo.transform.localPosition : Vector3.zero;
+
             ExtraPage = CreateExtraPage();
             ExtraPage.SetActive(false);
+
+            if (miscSlotGo != null)
+            {
+                miscSlotGo.name = "PinButton";
+                MainPinSlotButton = miscSlotGo;
+            }
+
+            ApplyHomePagePinExtraFollowLayout(miscSlotPrefabLocal);
+
+            if (fpSlotGo != null)
+                SetOrCreateButtonLabel(fpSlotGo, "FOLLOW\nPLAYER");
+            RefreshPinnedShortcutLabel();
+
+            var greenCoverTpl = GameObject.Find("CameraTablet(Clone)/MiscPage/GreenScreenButton");
+            AddMeshLabelCoverFromMiscGreen(fpSlotGo, greenCoverTpl, MeshLabelCoverFollowPlayerSlot);
+            AddMeshLabelCoverFromMiscGreen(MainPinSlotButton, greenCoverTpl, MeshLabelCoverPinMiscSlot);
+            AddMeshLabelCoverFromMiscGreen(MainPinnedShortcutButton, greenCoverTpl, MeshLabelCoverExtraVsFollowBleedSlot);
+            StripMiscLettersFromPrefabTextOnHosts(fpSlotGo, MainPinSlotButton, MainPinnedShortcutButton);
+
+            // Bundled tablet prefab may still contain a banana mesh; code-only removal does not edit the asset bundle.
+            RemoveBundledBananaVisualFromTablet();
 
             foreach (GameObject btns in Buttons)
             {
@@ -517,6 +557,7 @@ namespace YizziCamModV2
 
         public void SwitchToMainPage()
         {
+            MiscReturnToExtraInsteadOfMain = false;
             if (MiscPage.activeSelf) MiscPage.SetActive(false);
             if (ExtraPage.activeSelf) ExtraPage.SetActive(false);
             if (WardrobePage.activeSelf) WardrobePage.SetActive(false);
@@ -551,6 +592,261 @@ namespace YizziCamModV2
             if (FakeCameraGO.activeSelf) FakeCameraGO.SetActive(false);
         }
 
+        public void PinExtraChoice(string yzGButtonName)
+        {
+            if (string.IsNullOrEmpty(yzGButtonName)) return;
+            PlayerPrefs.SetString(ExtraPinPrefKey, yzGButtonName);
+            PlayerPrefs.Save();
+            RefreshPinnedShortcutLabel();
+        }
+
+        public void RefreshPinnedShortcutLabel()
+        {
+            string id = PlayerPrefs.GetString(ExtraPinPrefKey, "");
+            if (MainPinSlotButton != null)
+            {
+                SetOrCreateButtonLabel(MainPinSlotButton,
+                    string.IsNullOrEmpty(id) ? "PIN" : ExtraPinLabelForId(id));
+            }
+
+            if (MainPinnedShortcutButton != null)
+                SetOrCreateButtonLabel(MainPinnedShortcutButton, "EXTRA\nOPTS");
+        }
+
+        static string ExtraPinLabelForId(string id)
+        {
+            switch (id)
+            {
+                case "WeatherTimeBtn": return "WEATHER\n& TIME";
+                case "CameraClipBtn": return "CAMERA\nCLIP";
+                case "GeneralBtn": return "GENER\nAL";
+                case "SaveSettsBtn": return "SAVE\nSETTS";
+                case "LobbyHopBtn": return "LOBBY\nHOP";
+                case "GridBtn_1_1": return "WARD\nROBE";
+                case "GridBtn_1_2": return "REPO\nRT";
+                default: return "EXTRA\nOPTS";
+            }
+        }
+
+        public void SyncWeatherPageStatusTexts()
+        {
+            var ui = GetComponent<UI>();
+            if (WTRainStatusText != null)
+                WTRainStatusText.text = (ui != null && ui.raining) ? "RAIN:ON" : "RAIN:CLEAR";
+            if (WTTimeStatusText != null)
+            {
+                string[] tNames = { "DAWN", "DAY", "NIGHT FALL", "NIGHT", "MIDNIGHT" };
+                int tp = (ui != null) ? ui.timePreset : 1;
+                if (tp < 0 || tp >= tNames.Length) tp = 1;
+                WTTimeStatusText.text = "TIME:" + tNames[tp];
+            }
+        }
+
+        public void SyncGeneralPageStatusTexts()
+        {
+            var ui = GetComponent<UI>();
+            if (GenWatermarkText != null)
+                GenWatermarkText.text = (ui != null && ui.showWatermark) ? "WATERMARK:ON" : "WATERMARK:OFF";
+            if (GenRawRotText != null)
+                GenRawRotText.text = fpvRawRotation ? "RAW ROTATION:ON" : "RAW ROTATION:OFF";
+            if (GenSummonText != null)
+            {
+                int sm = InputManager.instance != null ? InputManager.instance.summonInputMode : 0;
+                if (sm < 0 || sm > 2) sm = 0;
+                string[] sLabels = { "KEY:F6", "KEY:X/Y", "" };
+                GenSummonText.text = sm == 2
+                    ? InputManager.instance.GetCustomBindLabel()
+                    : sLabels[sm];
+            }
+            if (GenCamDisText != null)
+                GenCamDisText.text = camDisconnect ? "CAM DIS:ON" : "CAM DIS:OFF";
+        }
+
+        /// <summary>Opens the pinned Extra feature from the main pin slot (or Extra page if nothing pinned).</summary>
+        public void OpenPinnedShortcutFromMain()
+        {
+            string id = PlayerPrefs.GetString(ExtraPinPrefKey, "");
+            MiscPage.SetActive(false);
+            ExtraPage.SetActive(false);
+            MainPage.SetActive(false);
+
+            if (string.IsNullOrEmpty(id))
+            {
+                ExtraPage.SetActive(true);
+                return;
+            }
+
+            switch (id)
+            {
+                case "WeatherTimeBtn":
+                    WeatherTimePage.SetActive(true);
+                    SyncWeatherPageStatusTexts();
+                    break;
+                case "CameraClipBtn":
+                    CameraClipPage.SetActive(true);
+                    if (ClipLagStatusText != null)
+                        ClipLagStatusText.text = fpvClipping ? "CLIP LAGGING:ON" : "CLIP LAGGING:OFF";
+                    if (ClipLagValueText != null)
+                        ClipLagValueText.text = fpvClipLag.ToString("F2");
+                    break;
+                case "GeneralBtn":
+                    GeneralPage.SetActive(true);
+                    SyncGeneralPageStatusTexts();
+                    break;
+                case "SaveSettsBtn":
+                    MainPage.SetActive(true);
+                    {
+                        var ui = GetComponent<UI>();
+                        Settings.Save(
+                            fpv ? 0 : fp ? 1 : tpv ? 2 : 3,
+                            TabletCamera.fieldOfView,
+                            ui.showWatermark,
+                            smoothing,
+                            ui.timePreset,
+                            ui.raining,
+                            ThirdPersonCamera.nearClipPlane,
+                            InputManager.instance.summonInputMode,
+                            fpvRawRotation,
+                            fpvClipping,
+                            fpvClipLag
+                        );
+                    }
+                    break;
+                case "LobbyHopBtn":
+                    MainPage.SetActive(true);
+                    LobbyHop();
+                    break;
+                case "GridBtn_1_1":
+                    WardrobePage.SetActive(true);
+                    TabletWardrobe.Instance?.RefreshDisplay();
+                    break;
+                case "GridBtn_1_2":
+                    ReportPage.SetActive(true);
+                    TabletReport.Instance?.Refresh();
+                    break;
+                default:
+                    MainPage.SetActive(true);
+                    break;
+            }
+        }
+
+        public void OpenMiscFromExtraPage()
+        {
+            MiscReturnToExtraInsteadOfMain = true;
+            ExtraPage.SetActive(false);
+            MiscPage.SetActive(true);
+        }
+
+        /// <summary>Into/out of tablet face on MainPage local <c>X</c> (FOLLOW; PIN inherits same <c>X</c>).</summary>
+        const float MainPagePlaqueDepthX = -0.007f;
+
+        /// <summary>FOLLOW plaque: MainPage-local depth on X.</summary>
+        /// <remarks>MainPage-local <c>Z</c> tracks along the row; use X for in/out, not Z.</remarks>
+        static readonly Vector3 FollowPlayerForwardNudge = new Vector3(MainPagePlaqueDepthX, 0f, 0f);
+
+        /// <summary>EXTRA: original bundle offset from the misc plaque (below / along the slab from Follow anchor).</summary>
+        static readonly Vector3 MainPinnedShortcutOffsetFromMiscSlot = new Vector3(0f, -0.52f, -0.25f);
+
+        /// <summary>Follow + depth; EXTRA below anchor; PIN same <c>X</c>/<c>Z</c> as FOLLOW (aligned with Follow column), EXTRA row height on <c>Y</c>.</summary>
+        void ApplyHomePagePinExtraFollowLayout(Vector3 miscSlotPrefabLocal)
+        {
+            var fp = GameObject.Find("CameraTablet(Clone)/MainPage/FPButton");
+            Transform pinTf = MainPage != null ? MainPage.transform.Find("PinButton") : null;
+            if (fp == null || pinTf == null || MainPinnedShortcutButton == null) return;
+
+            Vector3 fpLocal = miscSlotPrefabLocal + FollowPlayerForwardNudge;
+            fp.transform.localPosition = fpLocal;
+
+            Vector3 extraPos = miscSlotPrefabLocal + MainPinnedShortcutOffsetFromMiscSlot;
+            MainPinnedShortcutButton.transform.localPosition = extraPos;
+            pinTf.localPosition = new Vector3(fpLocal.x, extraPos.y, fpLocal.z);
+        }
+
+        /// <summary>Hide prefab TMP/Text layers that still show MISC (home page clones / shared mesh labels).</summary>
+        void StripMiscLettersFromPrefabTextOnHosts(params GameObject[] hosts)
+        {
+            if (hosts == null) return;
+            foreach (GameObject host in hosts)
+            {
+                if (host == null) continue;
+
+                Transform labelCanvasTf = host.transform.Find("LabelCanvas");
+                Transform labelTf = labelCanvasTf != null ? labelCanvasTf.Find("Label") : null;
+                RectTransform labelRt = labelTf != null ? labelTf.GetComponent<RectTransform>() : null;
+
+                foreach (var tmp in host.GetComponentsInChildren<TMP_Text>(true))
+                {
+                    if (tmp == null) continue;
+                    if (ShouldKeepMainPageLabelTMP(tmp, labelRt)) continue;
+                    if (IsMiscLikeText(tmp.text))
+                        tmp.enabled = false;
+                }
+                foreach (var tx in host.GetComponentsInChildren<Text>(true))
+                {
+                    if (tx == null) continue;
+                    if (labelRt != null && tx.rectTransform != null &&
+                        SameRectHierarchy(tx.rectTransform, labelRt))
+                        continue;
+                    if (IsMiscLikeText(tx.text))
+                        tx.enabled = false;
+                }
+            }
+
+            bool ShouldKeepMainPageLabelTMP(TMP_Text tmp, RectTransform programmaticLabelRt)
+            {
+                if (programmaticLabelRt == null) return false;
+                var r = tmp.rectTransform;
+                while (r != null)
+                {
+                    if (r == programmaticLabelRt)
+                        return true;
+                    r = r.parent as RectTransform;
+                }
+                return false;
+            }
+
+            bool SameRectHierarchy(RectTransform a, RectTransform b)
+            {
+                Transform t = a;
+                while (t != null)
+                {
+                    if (t == b) return true;
+                    t = t.parent;
+                }
+                return false;
+            }
+
+            bool IsMiscLikeText(string s)
+            {
+                return !string.IsNullOrEmpty(s) &&
+                       s.IndexOf("misc", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
+        /// <summary>Follow sits on misc plaque — crank Z forward hard so green slab buries baked MISC; FOLLOW label sits on canvas above.</summary>
+        static readonly Vector3 MeshLabelCoverFollowPlayerSlot = new Vector3(0f, 0.07f, 0.148f);
+
+        /// <summary>PIN slab (cloned misc mesh): forward cover for bleed.</summary>
+        static readonly Vector3 MeshLabelCoverPinMiscSlot = new Vector3(0f, 0.058f, 0.098f);
+
+        /// <summary>EXTRA clone under column — bury ghost FOLLOW / misc bleed.</summary>
+        static readonly Vector3 MeshLabelCoverExtraVsFollowBleedSlot = new Vector3(0f, 0.058f, 0.118f);
+
+        void AddMeshLabelCoverFromMiscGreen(GameObject host, GameObject miscGreenTemplate, Vector3 localOffset)
+        {
+            if (host == null || miscGreenTemplate == null) return;
+            if (host.transform.Find("MeshLabelCover") != null) return;
+
+            GameObject cover = Instantiate(miscGreenTemplate, host.transform);
+            cover.name = "MeshLabelCover";
+            cover.transform.localRotation = Quaternion.identity;
+            cover.transform.localScale = miscGreenTemplate.transform.localScale;
+            cover.transform.localPosition = localOffset;
+            foreach (var col in cover.GetComponentsInChildren<Collider>(true))
+                Destroy(col);
+            cover.transform.SetAsFirstSibling();
+        }
+
         GameObject CreateExtraPage()
         {
             GameObject page = Instantiate(MiscPage, MiscPage.transform.parent);
@@ -570,9 +866,10 @@ namespace YizziCamModV2
 
             var miscBtn = GameObject.Find("CameraTablet(Clone)/MainPage/MiscButton");
             var extraOptBtn = Instantiate(miscBtn, miscBtn.transform.parent);
-            extraOptBtn.name = "ExtraOptButton";
-            extraOptBtn.transform.localPosition = miscBtn.transform.localPosition + new Vector3(0f, -0.52f, -0.25f);
-            SetOrCreateButtonLabel(extraOptBtn, "Extra Opt.");
+            extraOptBtn.name = "MainPinnedShortcutBtn";
+            extraOptBtn.transform.localPosition = miscBtn.transform.localPosition + MainPinnedShortcutOffsetFromMiscSlot;
+            SetOrCreateButtonLabel(extraOptBtn, "EXTRA\nOPTS");
+            MainPinnedShortcutButton = extraOptBtn;
             Buttons.Add(extraOptBtn);
 
             var backTemplate = GameObject.Find("CameraTablet(Clone)/MiscPage/BackButton");
@@ -615,10 +912,16 @@ namespace YizziCamModV2
             if (rpComp == null) rpComp = ReportPage.AddComponent<TabletReport>();
             rpComp.Init(ReportPage.transform, backTemplate);
 
-            string[] btnLabels = { "WEATHER\n& TIME", "CAMERA\nCLIP", "GENER\nAL", "SAVE\nSETTS", "LOBBY\nHOP", "WARD\nROBE", "REPO\nRT" };
-            string[] btnNames = { "WeatherTimeBtn", "CameraClipBtn", "GeneralBtn", "SaveSettsBtn", "LobbyHopBtn", "GridBtn_1_1", "GridBtn_1_2" };
+            string[] btnLabels = {
+                "WEATHER\n& TIME", "CAMERA\nCLIP", "GENER\nAL", "SAVE\nSETTS",
+                "LOBBY\nHOP", "WARD\nROBE", "REPO\nRT", "MISC"
+            };
+            string[] btnNames = {
+                "WeatherTimeBtn", "CameraClipBtn", "GeneralBtn", "SaveSettsBtn",
+                "LobbyHopBtn", "GridBtn_1_1", "GridBtn_1_2", "ExtraMiscBtn"
+            };
             int btnNum = 0;
-            int[] colsPerRow = { 4, 3 };
+            int[] colsPerRow = { 4, 4 };
             float[] rowZOffset = { -0.25f, -0.40f };
             for (int row = 0; row < 2; row++)
             {
@@ -639,7 +942,7 @@ namespace YizziCamModV2
             hLine.transform.localPosition = backTemplate.transform.localPosition
                 + new Vector3(0f, 0.42f, -0.55f);
             hLine.transform.localScale = new Vector3(0.01f, 0.01f, 1.2f);
-            hLine.GetComponent<MeshRenderer>().material.color = new Color(1f, 1f, 0.25f);
+            hLine.GetComponent<MeshRenderer>().material.color = TabletLabelYellow;
             Destroy(hLine.GetComponent<Collider>());
 
             var vLine = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -647,7 +950,7 @@ namespace YizziCamModV2
             vLine.transform.localPosition = backTemplate.transform.localPosition
                 + new Vector3(0f, 0.15f, -0.55f);
             vLine.transform.localScale = new Vector3(0.01f, 0.55f, 0.01f);
-            vLine.GetComponent<MeshRenderer>().material.color = new Color(1f, 1f, 0.25f);
+            vLine.GetComponent<MeshRenderer>().material.color = TabletLabelYellow;
             Destroy(vLine.GetComponent<Collider>());
 
             return page;
@@ -683,7 +986,7 @@ namespace YizziCamModV2
                 summaryText = textGO.AddComponent<Text>();
                 summaryText.fontSize = 17;
                 summaryText.alignment = TextAnchor.UpperLeft;
-                summaryText.color = new Color(1f, 1f, 0.25f);
+                summaryText.color = TabletLabelYellow;
                 summaryText.horizontalOverflow = HorizontalWrapMode.Wrap;
                 summaryText.verticalOverflow = VerticalWrapMode.Truncate;
                 summaryText.supportRichText = true;
@@ -749,7 +1052,7 @@ namespace YizziCamModV2
             hLine.transform.localPosition = btnTemplate.transform.localPosition
                 + new Vector3(0f, 0.15f, -0.60f);
             hLine.transform.localScale = new Vector3(0.01f, 0.01f, 1.2f);
-            hLine.GetComponent<MeshRenderer>().material.color = new Color(1f, 1f, 0.25f);
+            hLine.GetComponent<MeshRenderer>().material.color = TabletLabelYellow;
             Destroy(hLine.GetComponent<Collider>());
 
             // vertical line splitting into left and right (full height)
@@ -758,7 +1061,7 @@ namespace YizziCamModV2
             vLine.transform.localPosition = btnTemplate.transform.localPosition
                 + new Vector3(0f, 0.25f, -0.60f);
             vLine.transform.localScale = new Vector3(0.01f, 1.2f, 0.01f);
-            vLine.GetComponent<MeshRenderer>().material.color = new Color(1f, 1f, 0.25f);
+            vLine.GetComponent<MeshRenderer>().material.color = TabletLabelYellow;
             Destroy(vLine.GetComponent<Collider>());
 
             // top-left: WATERMARK
@@ -841,9 +1144,9 @@ namespace YizziCamModV2
             textRT.offsetMax = Vector2.zero;
             var t = textGO.AddComponent<Text>();
             t.text = title;
-            t.fontSize = 28;
+            t.fontSize = TabletPageTitleFontSize;
             t.alignment = TextAnchor.MiddleCenter;
-            t.color = new Color(1f, 1f, 0.25f);
+            t.color = TabletLabelYellow;
             t.horizontalOverflow = HorizontalWrapMode.Overflow;
             t.verticalOverflow = VerticalWrapMode.Overflow;
             t.fontStyle = FontStyle.Bold;
@@ -871,7 +1174,7 @@ namespace YizziCamModV2
             var t = textGO.AddComponent<Text>();
             t.fontSize = 22;
             t.alignment = TextAnchor.MiddleCenter;
-            t.color = new Color(1f, 1f, 0.25f);
+            t.color = TabletLabelYellow;
             t.horizontalOverflow = HorizontalWrapMode.Overflow;
             t.verticalOverflow = VerticalWrapMode.Overflow;
             if (FovText != null) t.font = FovText.font;
@@ -927,7 +1230,7 @@ namespace YizziCamModV2
             WTRainStatusText.text = "RAIN:CLEAR";
             WTRainStatusText.fontSize = 22;
             WTRainStatusText.alignment = TextAnchor.MiddleCenter;
-            WTRainStatusText.color = new Color(1f, 1f, 0.25f);
+            WTRainStatusText.color = TabletLabelYellow;
             WTRainStatusText.horizontalOverflow = HorizontalWrapMode.Overflow;
             WTRainStatusText.verticalOverflow = VerticalWrapMode.Overflow;
             if (FovText != null) WTRainStatusText.font = FovText.font;
@@ -953,7 +1256,7 @@ namespace YizziCamModV2
             WTTimeStatusText.text = "TIME:DAY";
             WTTimeStatusText.fontSize = 22;
             WTTimeStatusText.alignment = TextAnchor.MiddleCenter;
-            WTTimeStatusText.color = new Color(1f, 1f, 0.25f);
+            WTTimeStatusText.color = TabletLabelYellow;
             WTTimeStatusText.horizontalOverflow = HorizontalWrapMode.Overflow;
             WTTimeStatusText.verticalOverflow = VerticalWrapMode.Overflow;
             if (FovText != null) WTTimeStatusText.font = FovText.font;
@@ -990,7 +1293,7 @@ namespace YizziCamModV2
             ClipLagStatusText.text = fpvClipping ? "CLIP LAGGING:ON" : "CLIP LAGGING:OFF";
             ClipLagStatusText.fontSize = 22;
             ClipLagStatusText.alignment = TextAnchor.MiddleCenter;
-            ClipLagStatusText.color = new Color(1f, 1f, 0.25f);
+            ClipLagStatusText.color = TabletLabelYellow;
             ClipLagStatusText.horizontalOverflow = HorizontalWrapMode.Overflow;
             ClipLagStatusText.verticalOverflow = VerticalWrapMode.Overflow;
             if (FovText != null) ClipLagStatusText.font = FovText.font;
@@ -1040,7 +1343,7 @@ namespace YizziCamModV2
             ClipLagValueText.text = fpvClipLag.ToString("F2");
             ClipLagValueText.fontSize = 22;
             ClipLagValueText.alignment = TextAnchor.MiddleCenter;
-            ClipLagValueText.color = new Color(1f, 1f, 0.25f);
+            ClipLagValueText.color = TabletLabelYellow;
             ClipLagValueText.horizontalOverflow = HorizontalWrapMode.Overflow;
             ClipLagValueText.verticalOverflow = VerticalWrapMode.Overflow;
             if (FovText != null) ClipLagValueText.font = FovText.font;
@@ -1095,22 +1398,70 @@ namespace YizziCamModV2
             textRT.offsetMax = Vector2.zero;
             var uiText = textGO.AddComponent<Text>();
             uiText.text = labelText;
-            uiText.fontSize = 28;
+            uiText.fontSize = TabletWorldButtonFontSize;
             uiText.alignment = TextAnchor.MiddleCenter;
-            uiText.color = new Color(1f, 1f, 0.25f);
+            uiText.color = TabletLabelYellow;
             uiText.horizontalOverflow = HorizontalWrapMode.Overflow;
             uiText.verticalOverflow = VerticalWrapMode.Overflow;
             if (FovText != null) uiText.font = FovText.font;
         }
 
+        /// <summary>Apply <see cref="TabletWorldButtonFontSize"/> and yellow to programmatic <see cref="Text"/> overlays.</summary>
+        void RestoreOriginalOverlayLabelSizing(GameObject btn)
+        {
+            if (btn == null) return;
+            Transform lcTf = btn.transform.Find("LabelCanvas");
+            if (lcTf == null) return;
+            RectTransform crt = lcTf.GetComponent<RectTransform>();
+            if (crt != null)
+                crt.sizeDelta = new Vector2(120f, 60f);
+
+            Transform labelTf = lcTf.Find("Label");
+            var uit = labelTf != null ? labelTf.GetComponent<Text>() : null;
+            if (uit == null) return;
+
+            uit.fontSize = TabletWorldButtonFontSize;
+            uit.lineSpacing = 1f;
+            uit.resizeTextForBestFit = false;
+            uit.horizontalOverflow = HorizontalWrapMode.Overflow;
+            uit.verticalOverflow = VerticalWrapMode.Overflow;
+            uit.color = TabletLabelYellow;
+        }
+
         void SetOrCreateButtonLabel(GameObject btn, string text)
         {
+            Transform labelPath = btn.transform.Find("LabelCanvas/Label");
+            if (labelPath != null && labelPath.GetComponent<Text>() is Text pathText)
+            {
+                pathText.text = text;
+                RestoreOriginalOverlayLabelSizing(btn);
+                return;
+            }
+
             var tmp = btn.GetComponentInChildren<TextMeshPro>(true);
-            if (tmp != null) { tmp.text = text; return; }
+            if (tmp != null)
+            {
+                tmp.text = text;
+                tmp.fontSize = TabletWorldButtonFontSize;
+                tmp.color = TabletLabelYellow;
+                return;
+            }
             var tmpUI = btn.GetComponentInChildren<TextMeshProUGUI>(true);
-            if (tmpUI != null) { tmpUI.text = text; return; }
+            if (tmpUI != null)
+            {
+                tmpUI.text = text;
+                tmpUI.fontSize = TabletWorldButtonFontSize;
+                tmpUI.color = TabletLabelYellow;
+                return;
+            }
             var existingText = btn.GetComponentInChildren<Text>(true);
-            if (existingText != null) { existingText.text = text; return; }
+            if (existingText != null)
+            {
+                existingText.text = text;
+                existingText.fontSize = TabletWorldButtonFontSize;
+                existingText.color = TabletLabelYellow;
+                return;
+            }
 
             var canvasGO = new GameObject("LabelCanvas");
             canvasGO.transform.SetParent(btn.transform, false);
@@ -1131,13 +1482,14 @@ namespace YizziCamModV2
             textRT.offsetMin = Vector2.zero;
             textRT.offsetMax = Vector2.zero;
             var labelText = textGO.AddComponent<Text>();
-            labelText.text = "EXTRA\nOPT.";
-            labelText.fontSize = 28;
+            labelText.text = text;
+            labelText.fontSize = TabletWorldButtonFontSize;
             labelText.alignment = TextAnchor.MiddleCenter;
-            labelText.color = new Color(1f, 1f, 0.25f);
+            labelText.color = TabletLabelYellow;
             labelText.horizontalOverflow = HorizontalWrapMode.Overflow;
             labelText.verticalOverflow = VerticalWrapMode.Overflow;
             if (FovText != null) labelText.font = FovText.font;
+            RestoreOriginalOverlayLabelSizing(btn);
         }
 
         GameObject LoadBundle(string goname, string resourcename)
@@ -1148,6 +1500,40 @@ namespace YizziCamModV2
             asb.Unload(false);
             str.Close();
             return go;
+        }
+
+        void RemoveBundledBananaVisualFromTablet()
+        {
+            if (CameraTablet == null) return;
+
+            static bool MatchesBanana(string s) =>
+                !string.IsNullOrEmpty(s) && s.IndexOf("banana", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            var toDestroy = new HashSet<GameObject>();
+            foreach (var t in CameraTablet.GetComponentsInChildren<Transform>(true))
+            {
+                if (t != null && MatchesBanana(t.name))
+                    toDestroy.Add(t.gameObject);
+            }
+
+            foreach (var mf in CameraTablet.GetComponentsInChildren<MeshFilter>(true))
+            {
+                Mesh sm = mf != null ? mf.sharedMesh : null;
+                if (sm != null && MatchesBanana(sm.name))
+                    toDestroy.Add(mf.gameObject);
+            }
+
+            foreach (var smr in CameraTablet.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                Mesh sm = smr != null ? smr.sharedMesh : null;
+                if (sm != null && MatchesBanana(sm.name))
+                    toDestroy.Add(smr.gameObject);
+            }
+
+            foreach (var go in toDestroy)
+            {
+                if (go != null) Destroy(go);
+            }
         }
 
         void ReplaceAtlasTexture()

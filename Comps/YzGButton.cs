@@ -27,79 +27,68 @@ namespace YizziCamModV2.Comps
                 switch (this.name)
                 {
                     case "BackButton":
-                        CameraController.Instance.MainPage.SetActive(true);
-                        CameraController.Instance.MiscPage.SetActive(false);
+                        if (CameraController.Instance.MiscReturnToExtraInsteadOfMain)
+                        {
+                            CameraController.Instance.MiscReturnToExtraInsteadOfMain = false;
+                            CameraController.Instance.MiscPage.SetActive(false);
+                            CameraController.Instance.ExtraPage.SetActive(true);
+                        }
+                        else
+                        {
+                            CameraController.Instance.MainPage.SetActive(true);
+                            CameraController.Instance.MiscPage.SetActive(false);
+                        }
                         break;
-                    case "ExtraOptButton":
+                    case "PinButton":
+                        CameraController.Instance.OpenPinnedShortcutFromMain();
+                        break;
+                    case "MainPinnedShortcutBtn":
                         CameraController.Instance.MainPage.SetActive(false);
                         CameraController.Instance.MiscPage.SetActive(false);
                         CameraController.Instance.ExtraPage.SetActive(true);
+                        break;
+                    case "ExtraMiscBtn":
+                        CameraController.Instance.OpenMiscFromExtraPage();
                         break;
                     case "ExtraBackButton":
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.MainPage.SetActive(true);
                         break;
                     case "WeatherTimeBtn":
+                        CameraController.Instance.PinExtraChoice("WeatherTimeBtn");
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.WeatherTimePage.SetActive(true);
-                        {
-                            var ui = CameraController.Instance.GetComponent<UI>();
-                            if (CameraController.Instance.WTRainStatusText != null)
-                                CameraController.Instance.WTRainStatusText.text = (ui != null && ui.raining) ? "RAIN:ON" : "RAIN:CLEAR";
-                            if (CameraController.Instance.WTTimeStatusText != null)
-                            {
-                                string[] tNames = { "DAWN", "DAY", "NIGHT FALL", "NIGHT", "MIDNIGHT" };
-                                int tp = (ui != null) ? ui.timePreset : 1;
-                                if (tp < 0 || tp >= tNames.Length) tp = 1;
-                                CameraController.Instance.WTTimeStatusText.text = "TIME:" + tNames[tp];
-                            }
-                        }
+                        CameraController.Instance.SyncWeatherPageStatusTexts();
                         break;
                     case "WTBackButton":
                         CameraController.Instance.WeatherTimePage.SetActive(false);
                         CameraController.Instance.ExtraPage.SetActive(true);
                         break;
                     case "CameraClipBtn":
+                        CameraController.Instance.PinExtraChoice("CameraClipBtn");
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.CameraClipPage.SetActive(true);
-                        {
-                            if (CameraController.Instance.ClipLagStatusText != null)
-                                CameraController.Instance.ClipLagStatusText.text = CameraController.Instance.fpvClipping ? "CLIP LAGGING:ON" : "CLIP LAGGING:OFF";
-                            if (CameraController.Instance.ClipLagValueText != null)
-                                CameraController.Instance.ClipLagValueText.text = CameraController.Instance.fpvClipLag.ToString("F2");
-                        }
+                        if (CameraController.Instance.ClipLagStatusText != null)
+                            CameraController.Instance.ClipLagStatusText.text = CameraController.Instance.fpvClipping ? "CLIP LAGGING:ON" : "CLIP LAGGING:OFF";
+                        if (CameraController.Instance.ClipLagValueText != null)
+                            CameraController.Instance.ClipLagValueText.text = CameraController.Instance.fpvClipLag.ToString("F2");
                         break;
                     case "CCBackButton":
                         CameraController.Instance.CameraClipPage.SetActive(false);
                         CameraController.Instance.ExtraPage.SetActive(true);
                         break;
                     case "GeneralBtn":
+                        CameraController.Instance.PinExtraChoice("GeneralBtn");
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.GeneralPage.SetActive(true);
-                        {
-                            var ui = CameraController.Instance.GetComponent<UI>();
-                            if (CameraController.Instance.GenWatermarkText != null)
-                                CameraController.Instance.GenWatermarkText.text = (ui != null && ui.showWatermark) ? "WATERMARK:ON" : "WATERMARK:OFF";
-                            if (CameraController.Instance.GenRawRotText != null)
-                                CameraController.Instance.GenRawRotText.text = CameraController.Instance.fpvRawRotation ? "RAW ROTATION:ON" : "RAW ROTATION:OFF";
-                            if (CameraController.Instance.GenSummonText != null)
-                            {
-                                int sm = InputManager.instance != null ? InputManager.instance.summonInputMode : 0;
-                                if (sm < 0 || sm > 2) sm = 0;
-                                string[] sLabels = { "KEY:F6", "KEY:X/Y", "" };
-                                CameraController.Instance.GenSummonText.text = sm == 2
-                                    ? InputManager.instance.GetCustomBindLabel()
-                                    : sLabels[sm];
-                            }
-                            if (CameraController.Instance.GenCamDisText != null)
-                                CameraController.Instance.GenCamDisText.text = CameraController.Instance.camDisconnect ? "CAM DIS:ON" : "CAM DIS:OFF";
-                        }
+                        CameraController.Instance.SyncGeneralPageStatusTexts();
                         break;
                     case "GenBackButton":
                         CameraController.Instance.GeneralPage.SetActive(false);
                         CameraController.Instance.ExtraPage.SetActive(true);
                         break;
                     case "SaveSettsBtn":
+                        CameraController.Instance.PinExtraChoice("SaveSettsBtn");
                         {
                             var ui = CameraController.Instance.GetComponent<UI>();
                             Settings.Save(
@@ -118,9 +107,11 @@ namespace YizziCamModV2.Comps
                         }
                         break;
                     case "LobbyHopBtn":
+                        CameraController.Instance.PinExtraChoice("LobbyHopBtn");
                         CameraController.Instance.LobbyHop();
                         break;
                     case "GridBtn_1_1":
+                        CameraController.Instance.PinExtraChoice("GridBtn_1_1");
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.WardrobePage.SetActive(true);
                         TabletWardrobe.Instance?.RefreshDisplay();
@@ -130,6 +121,7 @@ namespace YizziCamModV2.Comps
                         CameraController.Instance.ExtraPage.SetActive(true);
                         break;
                     case "GridBtn_1_2":
+                        CameraController.Instance.PinExtraChoice("GridBtn_1_2");
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.ReportPage.SetActive(true);
                         TabletReport.Instance?.Refresh();
@@ -399,10 +391,6 @@ namespace YizziCamModV2.Comps
                         CameraController.Instance.ThirdPersonCamera.fieldOfView = CameraController.Instance.TabletCamera.fieldOfView;
                         CameraController.Instance.FovText.text = CameraController.Instance.TabletCamera.fieldOfView.ToString();
                         CameraController.Instance.canbeused = true;
-                        break;
-                    case "MiscButton":
-                        CameraController.Instance.MainPage.SetActive(false);
-                        CameraController.Instance.MiscPage.SetActive(true);
                         break;
                     case "NearClipDown":
                         CameraController.Instance.TabletCamera.nearClipPlane -= 0.01f;

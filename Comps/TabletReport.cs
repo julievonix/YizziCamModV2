@@ -1,6 +1,8 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Photon.Pun;
 using Photon.Realtime;
 using UnityEngine;
@@ -42,6 +44,39 @@ namespace YizziCamModV2.Comps
         bool _detailMuted;
         bool _voiceFocusActive;
 
+        const float BananaLaserRange = 24f;
+        const float BananaTriggerOpenCooldown = 0.22f;
+        const float BananaRaySphereRadius = 0.055f;
+        const float BananaTriggerSqueeze = 0.18f;
+        const float BananaDotSeparationHalf = 0.044f;
+        const float BananaDotSphereDiameter = 0.018f;
+        const float BananaMidGirth = 0.0125f;
+        const float BananaMidSpan = 0.064f;
+        const int BananaHudFontSize = 150;
+        const float BananaHudWorldScale = 0.0085f;
+        static readonly Vector2 BananaHudCanvasSize = new Vector2(1000f, 260f);
+
+        GameObject _bananaGripRoot;
+        Transform _bananaAimPivot;
+        LineRenderer _bananaLaser;
+        Material _bananaDotBrownMat;
+        Material _bananaMidYellowMat;
+        Material _bananaLaserMat;
+        float _lastBananaTriggerOpenAt;
+        bool _prevLeftTrigDown;
+        bool _prevRightTrigDown;
+        float _prevBananaTrigAnalogL;
+        float _prevBananaTrigAnalogR;
+        GameObject _bananaTargetHudRoot;
+        Text _bananaTargetHudText;
+
+        GorillaPlayerScoreboardLine[] _bananaSbLinesCache;
+        float _bananaSbLinesNextRefresh;
+        const float BananaScoreboardLinesRefreshSec = 0.75f;
+        const float BananaGripNudgeTowardLeftX = -0.07f;
+        const float BananaGripNudgeAlongControllerForward = 0.045f;
+        const float BananaGripRollTowardLeftDegrees = 80f;
+
         struct SpeakerEntry
         {
             public int actorNumber;
@@ -53,6 +88,7 @@ namespace YizziCamModV2.Comps
         void OnDestroy()
         {
             if (Instance == this) Instance = null;
+            CleanupBananaGripVisual();
             CleanupDetailCamera();
         }
 
@@ -65,6 +101,8 @@ namespace YizziCamModV2.Comps
         void LateUpdate()
         {
             if (!gameObject.activeInHierarchy) return;
+
+            UpdateBananaPointerWhileReporting();
 
             EnforceMutes();
 
@@ -120,6 +158,443 @@ namespace YizziCamModV2.Comps
             }
         }
 
+        static Shader BananaPointerShaderFallback()
+        {
+            var s = Shader.Find("Universal Render Pipeline/Unlit");
+            if (s != null) return s;
+            s = Shader.Find("Unlit/Color");
+            if (s != null) return s;
+            return Shader.Find("Sprites/Default");
+        }
+
+        void CleanupBananaGripVisual()
+        {
+            if (_bananaDotBrownMat != null)
+            {
+                Destroy(_bananaDotBrownMat);
+                _bananaDotBrownMat = null;
+            }
+            if (_bananaMidYellowMat != null)
+            {
+                Destroy(_bananaMidYellowMat);
+                _bananaMidYellowMat = null;
+            }
+            if (_bananaLaserMat != null)
+            {
+                Destroy(_bananaLaserMat);
+                _bananaLaserMat = null;
+            }
+            _bananaLaser = null;
+            _bananaAimPivot = null;
+            if (_bananaGripRoot != null)
+            {
+                Destroy(_bananaGripRoot);
+                _bananaGripRoot = null;
+            }
+        }
+
+        static bool BananaHitIsLocalCollider(Collider hcol)
+        {
+            if (hcol == null) return false;
+            var gt = GorillaTagger.Instance;
+            if (gt == null) return false;
+
+            Transform t = hcol.transform;
+            try
+            {
+                if (gt.bodyCollider != null && t.IsChildOf(gt.bodyCollider.transform))
+                    return true;
+                if (gt.offlineVRRig != null && t.IsChildOf(gt.offlineVRRig.transform))
+                    return true;
+                CameraController cc = CameraController.Instance;
+                if (cc != null)
+                {
+                    if (cc.LeftHandGO != null && t.IsChildOf(cc.LeftHandGO.transform))
+                        return true;
+                    if (cc.RightHandGO != null && t.IsChildOf(cc.RightHandGO.transform))
+                        return true;
+                }
+            }
+            catch { /* ignore hierarchy edge cases */ }
+
+            return false;
+        }
+
+        void EnsureBananaGripVisual(CameraController cc)
+        {
+            if (_bananaGripRoot != null) return;
+
+            Shader sh = BananaPointerShaderFallback();
+            var root = new GameObject("YizziBananaPointer");
+            /* Not under ReportPage: UI RectTransforms can fight world rotations each frame. */
+            root.transform.SetParent(null, false);
+            root.SetActive(false);
+            _bananaGripRoot = root;
+
+            _bananaDotBrownMat = new Material(sh);
+            _bananaDotBrownMat.color = new Color(0.45f, 0.26f, 0.09f, 1f);
+
+            _bananaMidYellowMat = new Material(sh);
+            _bananaMidYellowMat.color = new Color(1f, 0.94f, 0.18f, 1f);
+
+            GameObject MakeDot(string name, Vector3 localPos)
+            {
+                var s = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                s.name = name;
+                s.transform.SetParent(root.transform, false);
+                s.transform.localPosition = localPos;
+                s.transform.localScale = Vector3.one * BananaDotSphereDiameter;
+                var col = s.GetComponent<SphereCollider>();
+                if (col != null) Destroy(col);
+                var mr = s.GetComponent<MeshRenderer>();
+                if (mr != null) mr.sharedMaterial = _bananaDotBrownMat;
+                return s;
+            }
+
+            float h = BananaDotSeparationHalf;
+            MakeDot("BananaDotBack", new Vector3(0f, 0f, -h));
+
+            var mid = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            mid.name = "BananaMidYellow";
+            mid.transform.SetParent(root.transform, false);
+            mid.transform.localPosition = Vector3.zero;
+            mid.transform.localScale = new Vector3(BananaMidGirth, BananaMidGirth, BananaMidSpan);
+            var midCol = mid.GetComponent<SphereCollider>();
+            if (midCol != null) Destroy(midCol);
+            var midMr = mid.GetComponent<MeshRenderer>();
+            if (midMr != null) midMr.sharedMaterial = _bananaMidYellowMat;
+
+            MakeDot("BananaDotFront", new Vector3(0f, 0f, h));
+
+            var aimPivotGO = new GameObject("BananaAimPivot");
+            aimPivotGO.transform.SetParent(root.transform, false);
+            aimPivotGO.transform.localPosition = new Vector3(0f, 0f, h);
+            _bananaAimPivot = aimPivotGO.transform;
+
+            var lrGo = new GameObject("BananaLaser");
+            lrGo.transform.SetParent(root.transform, false);
+            _bananaLaser = lrGo.AddComponent<LineRenderer>();
+            _bananaLaserMat = new Material(sh);
+            _bananaLaserMat.color = new Color(1f, 1f, 0.15f, 0.92f);
+            _bananaLaser.material = _bananaLaserMat;
+            _bananaLaser.positionCount = 2;
+            _bananaLaser.startWidth = 0.0075f;
+            _bananaLaser.endWidth = 0.003f;
+            _bananaLaser.numCapVertices = 3;
+            _bananaLaser.textureMode = LineTextureMode.Stretch;
+            _bananaLaser.useWorldSpace = true;
+        }
+
+        static string BananaNickForPhotonActor(int actorNr)
+        {
+            if (actorNr <= 0 || !PhotonNetwork.InRoom || PhotonNetwork.PlayerList == null)
+                return "---";
+            foreach (var pl in PhotonNetwork.PlayerList)
+            {
+                if (pl == null || pl.ActorNumber != actorNr) continue;
+                string n = pl.NickName;
+                return string.IsNullOrEmpty(n) ? "P" + actorNr : n;
+            }
+            return "P" + actorNr;
+        }
+
+        void EnsureBananaTargetHud()
+        {
+            if (_bananaTargetHudRoot != null) return;
+            if (_bananaGripRoot == null) return;
+
+            var hudGO = new GameObject("BananaTargetNameHud");
+            hudGO.transform.SetParent(_bananaGripRoot.transform, false);
+
+            var canvas = hudGO.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            var rt = hudGO.GetComponent<RectTransform>();
+            rt.sizeDelta = BananaHudCanvasSize;
+
+            hudGO.transform.localRotation = Quaternion.identity;
+            hudGO.transform.localScale = Vector3.one * BananaHudWorldScale;
+
+            var textGO = new GameObject("NameText");
+            textGO.transform.SetParent(hudGO.transform, false);
+            var txt = textGO.AddComponent<Text>();
+            txt.text = "---";
+            txt.fontSize = BananaHudFontSize;
+            txt.alignment = TextAnchor.MiddleCenter;
+            txt.color = Color.white;
+            txt.horizontalOverflow = HorizontalWrapMode.Overflow;
+            txt.verticalOverflow = VerticalWrapMode.Overflow;
+            if (CameraController.Instance?.FovText != null && CameraController.Instance.FovText.font != null)
+                txt.font = CameraController.Instance.FovText.font;
+            var trt = textGO.GetComponent<RectTransform>();
+            trt.anchorMin = Vector2.zero;
+            trt.anchorMax = Vector2.one;
+            trt.offsetMin = Vector2.zero;
+            trt.offsetMax = Vector2.zero;
+
+            _bananaTargetHudRoot = hudGO;
+            _bananaTargetHudText = txt;
+        }
+
+        void BananaRefreshTargetHud(Vector3 nearLaserTipWorld, Camera faceCam, int hitActorNr)
+        {
+            EnsureBananaTargetHud();
+            if (_bananaTargetHudRoot == null || _bananaTargetHudText == null) return;
+            _bananaTargetHudRoot.SetActive(true);
+
+            var hudRt = _bananaTargetHudRoot.GetComponent<RectTransform>();
+            if (hudRt != null)
+                hudRt.sizeDelta = BananaHudCanvasSize;
+            _bananaTargetHudRoot.transform.localScale = Vector3.one * BananaHudWorldScale;
+            _bananaTargetHudText.fontSize = BananaHudFontSize;
+
+            Vector3 worldPos = nearLaserTipWorld;
+            if (faceCam != null)
+                worldPos += faceCam.transform.up * 0.09f + faceCam.transform.right * -0.02f;
+            else
+                worldPos += Vector3.up * 0.1f;
+
+            _bananaTargetHudRoot.transform.position = worldPos;
+            if (faceCam != null)
+            {
+                Vector3 dir = worldPos - faceCam.transform.position;
+                if (dir.sqrMagnitude > 1e-6f)
+                    _bananaTargetHudRoot.transform.rotation = Quaternion.LookRotation(dir, faceCam.transform.up);
+            }
+
+            if (hitActorNr > 0 && hitActorNr != (PhotonNetwork.LocalPlayer?.ActorNumber ?? -1))
+            {
+                _bananaTargetHudText.color = new Color(1f, 0.95f, 0.2f);
+                string nick = BananaNickForPhotonActor(hitActorNr);
+                _bananaTargetHudText.text = nick;
+            }
+            else
+            {
+                _bananaTargetHudText.color = new Color(0.85f, 0.85f, 0.85f);
+                _bananaTargetHudText.text = "---";
+            }
+        }
+
+        GorillaPlayerScoreboardLine[] GetBananaScoreboardLinesCached()
+        {
+            if (_bananaSbLinesCache == null || Time.time >= _bananaSbLinesNextRefresh)
+            {
+                _bananaSbLinesCache = FindObjectsOfType<GorillaPlayerScoreboardLine>(true);
+                _bananaSbLinesNextRefresh = Time.time + BananaScoreboardLinesRefreshSec;
+            }
+            return _bananaSbLinesCache;
+        }
+
+        static int ValidateResolvedRemoteActor(int actorNr)
+        {
+            if (actorNr <= 0) return -1;
+            bool inRoom = false;
+            foreach (var p in PhotonNetwork.PlayerList)
+            {
+                if (p != null && p.ActorNumber == actorNr) { inRoom = true; break; }
+            }
+            if (!inRoom) return -1;
+            int localNr = PhotonNetwork.LocalPlayer?.ActorNumber ?? -1;
+            if (actorNr == localNr) return -1;
+            return actorNr;
+        }
+
+        static int ResolveActorFromRayHit(Collider hc, GorillaPlayerScoreboardLine[] sbLines)
+        {
+            if (hc == null) return -1;
+
+            Transform ht = hc.transform;
+
+            VRRig rigHit = hc.GetComponentInParent<VRRig>();
+            if (rigHit != null && rigHit.isOfflineVRRig)
+                return -1;
+
+            if (PhotonNetwork.InRoom && sbLines != null)
+            {
+                for (int i = 0; i < sbLines.Length; i++)
+                {
+                    GorillaPlayerScoreboardLine line = sbLines[i];
+                    VRRig rr = line?.playerVRRig;
+                    if (rr == null || line.playerActorNumber <= 0 || rr.isOfflineVRRig)
+                        continue;
+                    if (ht.IsChildOf(rr.transform))
+                        return ValidateResolvedRemoteActor(line.playerActorNumber);
+                }
+            }
+
+            PhotonView pv = hc.GetComponentInParent<PhotonView>();
+            int actorNr = -1;
+
+            if (pv != null && pv.OwnerActorNr > 0)
+                actorNr = pv.OwnerActorNr;
+            else if (rigHit != null)
+            {
+                PhotonView rp = rigHit.GetComponent<PhotonView>() ?? rigHit.GetComponentInParent<PhotonView>();
+                if (rp != null && rp.OwnerActorNr > 0)
+                    actorNr = rp.OwnerActorNr;
+                else
+                {
+                    string vis = rigHit.playerNameVisible?.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrEmpty(vis) && PhotonNetwork.InRoom && PhotonNetwork.PlayerList != null)
+                    {
+                        foreach (var pl in PhotonNetwork.PlayerList)
+                        {
+                            if (pl == null || pl.IsLocal) continue;
+                            string nick = (pl.NickName ?? "").Trim().ToUpperInvariant();
+                            if (nick == vis)
+                            {
+                                actorNr = pl.ActorNumber;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return ValidateResolvedRemoteActor(actorNr);
+        }
+
+        static Vector3 BananaGripLocalPosition(bool leftGrip, bool rightGrip)
+        {
+            bool leftOnly = leftGrip && !rightGrip;
+            float lateral = leftOnly ? -0.058f : 0.058f;
+            lateral += BananaGripNudgeTowardLeftX;
+            return new Vector3(lateral, -0.018f, -0.048f);
+        }
+
+        static Quaternion BananaGripRotationInHand(bool rightGripDominant)
+        {
+            float rollZ = 6f + (rightGripDominant
+                ? -BananaGripRollTowardLeftDegrees
+                : BananaGripRollTowardLeftDegrees);
+            return Quaternion.Euler(22f, -4f, rollZ);
+        }
+
+        void UpdateBananaPointerWhileReporting()
+        {
+            var cc = CameraController.Instance;
+            Transform reportRt = cc != null ? cc.ReportPage?.transform : null;
+            bool reportVisible = cc != null && cc.ReportPage != null && cc.ReportPage.activeInHierarchy;
+
+            if (!reportVisible)
+            {
+                if (_bananaGripRoot != null)
+                    _bananaGripRoot.SetActive(false);
+                return;
+            }
+
+            bool inRoom = PhotonNetwork.InRoom;
+
+            InputManager im = InputManager.instance;
+            bool lg = im != null && im.LeftGrip;
+            bool rg = im != null && im.RightGrip;
+            if (!lg && !rg)
+            {
+                if (_bananaGripRoot != null)
+                    _bananaGripRoot.SetActive(false);
+                return;
+            }
+
+            Transform handTf = null;
+            if (rg)
+                handTf = cc.RightHandGO != null ? cc.RightHandGO.transform : null;
+            else if (lg)
+                handTf = cc.LeftHandGO != null ? cc.LeftHandGO.transform : null;
+
+            if (handTf == null) return;
+
+            EnsureBananaGripVisual(cc);
+            if (_bananaAimPivot == null) return;
+
+            var root = _bananaGripRoot;
+            root.SetActive(true);
+            if (root.transform.parent != handTf)
+                root.transform.SetParent(handTf, false);
+
+            Vector3 lp = BananaGripLocalPosition(lg, rg);
+            lp.z += BananaGripNudgeAlongControllerForward;
+            root.transform.localPosition = lp;
+            root.transform.localRotation = BananaGripRotationInHand(rg);
+
+            Vector3 rayDir = root.transform.forward.normalized;
+            float startNudge = 0.045f;
+            Vector3 rayOrigin = _bananaAimPivot.position + rayDir * startNudge;
+            if (rayDir.sqrMagnitude < 0.0001f)
+            {
+                rayDir = handTf.forward.normalized;
+                rayOrigin = handTf.position + rayDir * startNudge;
+            }
+
+            GorillaPlayerScoreboardLine[] sbLines = inRoom ? GetBananaScoreboardLinesCached() : null;
+
+            var hits = Physics.SphereCastAll(rayOrigin, BananaRaySphereRadius, rayDir, BananaLaserRange,
+                Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide);
+            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+            Vector3 laserEnd = rayOrigin + rayDir * BananaLaserRange;
+            int hitActor = -1;
+
+            for (int i = 0; i < hits.Length; i++)
+            {
+                Collider hcol = hits[i].collider;
+                if (hcol == null) continue;
+                if (reportRt != null && hcol.transform.IsChildOf(reportRt))
+                    continue;
+                if (cc.CameraTablet != null && hcol.transform.IsChildOf(cc.CameraTablet.transform))
+                    continue;
+                if (BananaHitIsLocalCollider(hcol))
+                    continue;
+
+                int actor = ResolveActorFromRayHit(hcol, sbLines);
+                if (actor <= 0) continue;
+
+                hitActor = actor;
+                laserEnd = hits[i].point;
+                break;
+            }
+
+            Camera faceCam = null;
+            if (GorillaTagger.Instance != null && GorillaTagger.Instance.mainCamera != null)
+                faceCam = GorillaTagger.Instance.mainCamera.GetComponent<Camera>();
+
+            if (_bananaLaser != null)
+            {
+                Vector3 laserStart = _bananaAimPivot.position + rayDir * 0.01f;
+                _bananaLaser.SetPosition(0, laserStart);
+                _bananaLaser.SetPosition(1, laserEnd);
+            }
+
+            int localActor = PhotonNetwork.LocalPlayer?.ActorNumber ?? -1;
+            int hudActor = hitActor > 0 && hitActor != localActor ? hitActor : -1;
+            BananaRefreshTargetHud(laserEnd, faceCam, hudActor);
+
+            if (hitActor <= 0 || hitActor == localActor || !inRoom)
+                return;
+
+            var poller = ControllerInputPoller.instance;
+            float rawR = poller != null ? poller.rightControllerIndexFloat : 0f;
+            float rawL = poller != null ? poller.leftControllerIndexFloat : 0f;
+            bool curR = rawR >= BananaTriggerSqueeze || (im != null && im.RightTrigger);
+            bool curL = rawL >= BananaTriggerSqueeze || (im != null && im.LeftTrigger);
+
+            bool edgeR = rg && curR && !_prevRightTrigDown;
+            bool edgeL = !rg && lg && curL && !_prevLeftTrigDown;
+            bool pulseR = rg && rawR >= 0.48f && _prevBananaTrigAnalogR < 0.38f;
+            bool pulseL = !rg && lg && rawL >= 0.48f && _prevBananaTrigAnalogL < 0.38f;
+
+            bool triggerAct = rg ? (edgeR || pulseR) : (edgeL || pulseL);
+            _prevLeftTrigDown = curL;
+            _prevRightTrigDown = curR;
+            _prevBananaTrigAnalogL = rawL;
+            _prevBananaTrigAnalogR = rawR;
+
+            if (!triggerAct) return;
+            if (_inDetail && _detailActorNumber == hitActor) return;
+            if (Time.time - _lastBananaTriggerOpenAt < BananaTriggerOpenCooldown) return;
+
+            _lastBananaTriggerOpenAt = Time.time;
+            ShowDetail(hitActor);
+        }
+
         // ========== GRID VIEW ==========
 
         GameObject _notConnectedLabel;
@@ -134,6 +609,7 @@ namespace YizziCamModV2.Comps
             _playerActorNumbers.Clear();
             _speakerEntries.Clear();
             _cachedLines = null;
+            _bananaSbLinesCache = null;
             _lastPlayerHash = ComputePlayerHash();
             _nextForceRefresh = Time.time + ForceRefreshInterval;
 
@@ -297,6 +773,20 @@ namespace YizziCamModV2.Comps
 
         public void ShowDetail(int actorNumber)
         {
+            if (_container == null || _btnTemplate == null) return;
+
+            Player targetPlayer = null;
+            foreach (var p in PhotonNetwork.PlayerList)
+            {
+                if (p.ActorNumber == actorNumber) { targetPlayer = p; break; }
+            }
+            if (targetPlayer == null) { HideDetail(); return; }
+
+            if (_inDetail && _detailActorNumber == actorNumber)
+                return;
+
+            ClearExistingDetailPanels();
+
             _inDetail = true;
             _detailActorNumber = actorNumber;
             _detailViewIndex = 0;
@@ -305,15 +795,7 @@ namespace YizziCamModV2.Comps
             foreach (var go in _items)
                 if (go != null) go.SetActive(false);
 
-            if (_container == null || _btnTemplate == null) return;
             var basePos = _btnTemplate.transform.localPosition;
-
-            Player targetPlayer = null;
-            foreach (var p in PhotonNetwork.PlayerList)
-            {
-                if (p.ActorNumber == actorNumber) { targetPlayer = p; break; }
-            }
-            if (targetPlayer == null) { HideDetail(); return; }
 
             string playerName = string.IsNullOrEmpty(targetPlayer.NickName)
                 ? "P" + actorNumber : targetPlayer.NickName;
@@ -600,6 +1082,18 @@ namespace YizziCamModV2.Comps
             _detailItems.Add(btn);
         }
 
+        void ClearExistingDetailPanels()
+        {
+            CleanupDetailCamera();
+            foreach (var go in _detailItems)
+                if (go != null) Destroy(go);
+            _detailItems.Clear();
+            _detailFpsText = null;
+            _detailPlatformText = null;
+            _detailInfoText = null;
+            _detailMuted = false;
+        }
+
         public void HideDetail()
         {
             _inDetail = false;
@@ -810,7 +1304,7 @@ namespace YizziCamModV2.Comps
             if (Time.time < _nextDetailFpsUpdate) return;
             _nextDetailFpsUpdate = Time.time + 0.5f;
 
-            // Update FPS and platform
+            // Update FPS and platform labels
             if (_detailRig != null)
             {
                 int fps = GetRigFps(_detailRig);
@@ -839,6 +1333,12 @@ namespace YizziCamModV2.Comps
 
         static readonly FieldInfo _fpsField = typeof(VRRig).GetField("fps",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly FieldInfo _vrrigSdkIndexField = typeof(VRRig).GetField("SDKIndex",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly FieldInfo _vrrigRankedSubPcField = typeof(VRRig).GetField("currentRankedSubTierPC",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly FieldInfo _vrrigRankedSubQuestField = typeof(VRRig).GetField("currentRankedSubTierQuest",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
         static int GetRigFps(VRRig rig)
         {
@@ -847,21 +1347,666 @@ namespace YizziCamModV2.Comps
             catch { return -1; }
         }
 
+        static Photon.Realtime.Player FindPhotonPlayerByActor(int actorNumber)
+        {
+            if (!PhotonNetwork.InRoom || actorNumber <= 0) return null;
+            foreach (var p in PhotonNetwork.PlayerList)
+            {
+                if (p.ActorNumber == actorNumber) return p;
+            }
+            return null;
+        }
+
+        static FieldInfo _fScoreboardNetPlayerField;
+
+        /// <returns>Photon <see cref="Player.UserId"/>, otherwise scoreboard <c>linePlayer</c>'s networked user id.</returns>
+        static string ResolveUserIdForActor(int actorNumber, Photon.Realtime.Player photonPlayer)
+        {
+            if (!string.IsNullOrWhiteSpace(photonPlayer?.UserId))
+                return photonPlayer.UserId.Trim();
+
+            foreach (var line in FindObjectsOfType<GorillaPlayerScoreboardLine>(true))
+            {
+                if (line == null || line.playerActorNumber != actorNumber) continue;
+
+                object np = TryGetScoreboardLinkedNetPlayer(line);
+                if (np == null) continue;
+
+                var pu = np.GetType().GetProperty("UserId",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (pu == null || pu.PropertyType != typeof(string)) continue;
+
+                try
+                {
+                    string u = pu.GetValue(np) as string;
+                    if (!string.IsNullOrWhiteSpace(u))
+                        return u.Trim();
+                }
+                catch { /* ignore reflection read errors */ }
+            }
+
+            return null;
+        }
+
+        static object TryGetScoreboardLinkedNetPlayer(GorillaPlayerScoreboardLine line)
+        {
+            try
+            {
+                _fScoreboardNetPlayerField ??= typeof(GorillaPlayerScoreboardLine).GetField(
+                    "linePlayer", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                return _fScoreboardNetPlayerField?.GetValue(line);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Gorilla Tag: use game-synced ranked subtier fields when available, then SteamID64 / bounded props /
+        /// Photon <see cref="RuntimePlatform"/> ints, then XR SDK mismatch from PC, then lobby-style defaults.
+        /// </summary>
         static string DetectPlatform(int actorNumber)
         {
-            // GT doesn't expose platform data and mod-based detection is unreliable
-            return "?";
+            var player = FindPhotonPlayerByActor(actorNumber);
+            if (player == null)
+                return GuessRemainderForKnownRemotePlayer(null);
+
+            var rig = FindRigForActor(actorNumber);
+            if (TryPlatformFromGorillaRankedSubtiers(rig, out string rankedLabel))
+                return rankedLabel;
+
+            string resolvedUid = ResolveUserIdForActor(actorNumber, player);
+            if (PhotonUserIdLooksLikeSteam(resolvedUid))
+                return "STEAM";
+            if (CustomPropsContainBoundedSteamAccount(player.CustomProperties))
+                return "STEAM";
+
+            int scoreQ = 0, scoreP = 0;
+            AccumulateRuntimePlatformFromPhotonProps(player.CustomProperties, ref scoreQ, ref scoreP);
+
+            if (scoreQ > scoreP) return "QUEST";
+            if (scoreP > scoreQ) return "STEAM";
+
+            if (TryInferFromVrrigSdkVersusLocal(actorNumber, out string sdkGuess))
+                return sdkGuess;
+
+            // Only when you are ON Quest: peers with identical networked SDK indices are fellow Quest/native clients.
+            // Doing this while on Steam/PC falsely marks every remote as STEAM once SDK parity matches yours.
+            if (TrySameSdkIndexAsHostGuess(actorNumber, out string sameSdkGuess))
+                return sameSdkGuess;
+
+            return GuessRemainderForKnownRemotePlayer(player);
+        }
+
+        /// <summary>
+        /// Networked <see cref="VRRig"/> ranked subtier per store (PC vs Quest). Strong signal when only one
+        /// ladder is active or one clearly dominates.
+        /// </summary>
+        static bool TryPlatformFromGorillaRankedSubtiers(VRRig rig, out string label)
+        {
+            label = null;
+            if (rig == null || _vrrigRankedSubPcField == null || _vrrigRankedSubQuestField == null)
+                return false;
+
+            int pc;
+            int q;
+            try
+            {
+                pc = (int)_vrrigRankedSubPcField.GetValue(rig);
+                q = (int)_vrrigRankedSubQuestField.GetValue(rig);
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (pc <= 0 && q <= 0)
+                return false;
+
+            if (pc > 0 && q <= 0)
+            {
+                label = "STEAM";
+                return true;
+            }
+
+            if (q > 0 && pc <= 0)
+            {
+                label = "QUEST";
+                return true;
+            }
+
+            if (pc != q)
+            {
+                label = pc > q ? "STEAM" : "QUEST";
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>PC lobbies skew Steam; subtier/SDK/Photon usually split crossplay before this.</summary>
+        static string GuessRemainderForKnownRemotePlayer(Photon.Realtime.Player player)
+        {
+            if (player != null && player.IsLocal)
+                return CoarseGuessFromRunningClient();
+
+            if (UnityEngine.Application.platform == RuntimePlatform.Android)
+            {
+                if (player != null)
+                {
+                    string uidQ = ResolveUserIdForActor(player.ActorNumber, player);
+                    if (PhotonUserIdLooksLikeSteam(uidQ)
+                        || CustomPropsContainBoundedSteamAccount(player.CustomProperties))
+                        return "STEAM";
+                }
+
+                return "QUEST";
+            }
+
+            if (player == null)
+                return "STEAM";
+
+            string uid = ResolveUserIdForActor(player.ActorNumber, player);
+            if (PhotonUserIdLooksLikeSteam(uid) || CustomPropsContainBoundedSteamAccount(player.CustomProperties))
+                return "STEAM";
+
+            int aq = 0, ap = 0;
+            AccumulateRuntimePlatformFromPhotonProps(player.CustomProperties, ref aq, ref ap);
+            if (ap > aq)
+                return "STEAM";
+
+            if (RemoteVrrigSdkDiffersFromLocalDesktop(player.ActorNumber))
+                return "QUEST";
+
+            return "STEAM";
+        }
+
+        static readonly Regex _rxWholeWordSteam = new Regex(@"\bsteam\b", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        /// <summary>Substring + word “steam” in debug/diagnostic scoring only — not used for authoritative labels.</summary>
+        static bool PhotonCustomPropsSuggestSteam(IDictionary props)
+        {
+            if (props == null || props.Count == 0) return false;
+            string b = BuildCustomPropertiesBlob(props).ToLowerInvariant();
+            return BlobIndicatesSteam(loweredBlob: b);
+        }
+
+        static bool CustomPropsContainBoundedSteamAccount(IDictionary props)
+        {
+            if (props == null || props.Count == 0) return false;
+            return LowerAsciiContainsBoundedSteam64(BuildCustomPropertiesBlob(props).ToLowerInvariant());
+        }
+
+        static bool RemoteVrrigSdkDiffersFromLocalDesktop(int remoteActorNumber)
+        {
+            if (!PhotonNetwork.InRoom || remoteActorNumber <= 0) return false;
+
+            RuntimePlatform plat = UnityEngine.Application.platform;
+            bool localDesktop = plat == RuntimePlatform.WindowsPlayer ||
+                                plat == RuntimePlatform.LinuxPlayer ||
+                                plat == RuntimePlatform.OSXPlayer ||
+                                plat == RuntimePlatform.WindowsEditor ||
+                                plat == RuntimePlatform.LinuxEditor ||
+                                plat == RuntimePlatform.OSXEditor;
+            if (!localDesktop) return false;
+
+            var localP = PhotonNetwork.LocalPlayer;
+            if (localP == null) return false;
+
+            var lrig = FindRigForActor(localP.ActorNumber);
+            var rrig = FindRigForActor(remoteActorNumber);
+            if (lrig == null || rrig == null) return false;
+
+            int ls = ReadVrrigSdkIndexOrSentinel(lrig);
+            int rs = ReadVrrigSdkIndexOrSentinel(rrig);
+            return ls != int.MinValue && rs != int.MinValue && ls != rs;
+        }
+
+        static bool BlobIndicatesSteam(string loweredBlob)
+        {
+            if (string.IsNullOrEmpty(loweredBlob)) return false;
+
+            if (LowerAsciiContainsBoundedSteam64(loweredBlob))
+                return true;
+
+            foreach (var s in new[] { "steamworks", "steamwin", "csteam", "steam_", "|steam|" })
+            {
+                if (loweredBlob.IndexOf(s, System.StringComparison.Ordinal) >= 0)
+                    return true;
+            }
+
+            return _rxWholeWordSteam.IsMatch(loweredBlob);
+        }
+
+        /// <summary>
+        /// A 7656119… SteamID64 touching non-digits (or blob ends) — avoids matching longer digit hashes that merely contain those digits.
+        /// </summary>
+        static bool LowerAsciiContainsBoundedSteam64(string lowerAscii)
+        {
+            if (string.IsNullOrEmpty(lowerAscii)) return false;
+            const string prefix = "7656119";
+
+            int i = 0;
+            while (i <= lowerAscii.Length - prefix.Length)
+            {
+                if (lowerAscii.IndexOf(prefix, i, System.StringComparison.Ordinal) < 0)
+                    break;
+
+                int start = lowerAscii.IndexOf(prefix, i, System.StringComparison.Ordinal);
+                int end = start;
+                while (end < lowerAscii.Length && char.IsDigit(lowerAscii[end]))
+                    end++;
+                int runLen = end - start;
+                if (runLen >= 17 && runLen <= 19)
+                {
+                    bool leftOk = start == 0 || !char.IsDigit(lowerAscii[start - 1]);
+                    bool rightOk = end == lowerAscii.Length || !char.IsDigit(lowerAscii[end]);
+                    if (leftOk && rightOk && AllDigits(lowerAscii.Substring(start, runLen)))
+                        return true;
+                }
+
+                i = start + 1;
+            }
+
+            return false;
+        }
+
+
+        static bool TrySameSdkIndexAsHostGuess(int actorNumber, out string label)
+        {
+            label = null;
+
+            // On Steam/PC, matching SDK parity with natives would mis-label every remote as Steam.
+            if (UnityEngine.Application.platform != RuntimePlatform.Android)
+                return false;
+
+            var lp = PhotonNetwork.LocalPlayer;
+            if (lp == null || !PhotonNetwork.InRoom) return false;
+
+            var lrig = FindRigForActor(lp.ActorNumber);
+            var rr = FindRigForActor(actorNumber);
+            if (lrig == null || rr == null) return false;
+
+            int ls = ReadVrrigSdkIndexOrSentinel(lrig);
+            int rs = ReadVrrigSdkIndexOrSentinel(rr);
+            if (ls == int.MinValue || rs == int.MinValue || ls != rs) return false;
+
+            label = "QUEST";
+            return true;
+        }
+
+        /// <summary>Snap to Quest (Android storefront build) vs Steam-style desktop without ever emitting ?.</summary>
+        static string CoarseGuessFromRunningClient()
+        {
+            string coarse = LocalUnityPlatformFallback();
+            if (coarse != "?") return coarse;
+            return UnityEngine.Application.platform == RuntimePlatform.Android ? "QUEST" : "STEAM";
+        }
+
+        /// <returns>SteamID64 only when Photon exposes it as its own numeric token slice (never digit-collapse composites).</returns>
+        static bool PhotonUserIdLooksLikeSteam(string userId)
+        {
+            if (string.IsNullOrEmpty(userId)) return false;
+
+            string u = userId.Trim();
+
+            foreach (var piece in SteamAuthIdSlices(u))
+            {
+                string t = piece.Trim();
+                if (t.Length < 17 || t.Length > 19)
+                    continue;
+                if (!t.StartsWith("7656119", System.StringComparison.Ordinal) || !AllDigits(t))
+                    continue;
+                return true;
+            }
+
+            string ul = u.ToLowerInvariant();
+            return LowerAsciiContainsBoundedSteam64(ul);
+        }
+
+        /// <remarks>Photon UserId may concatenate PlayFab/oculus/meta tokens separated by separators.</remarks>
+        static IEnumerable<string> SteamAuthIdSlices(string userId)
+        {
+            string u = userId.Trim();
+            yield return u;
+
+            foreach (var part in u.Split(
+                         new[]
+                         {
+                             '|', ':', '/', ';', '_', ',', ' ', '=', '#', '\\', '\t', '\n', '\"', '\''
+                         },
+                         System.StringSplitOptions.RemoveEmptyEntries))
+            {
+                string t = part.Trim();
+                if (t.Length == 0 || string.Equals(t, u, System.StringComparison.Ordinal))
+                    continue;
+                yield return t;
+            }
+        }
+
+        static bool AllDigits(string s)
+        {
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (!char.IsDigit(s[i])) return false;
+            }
+
+            return true;
+        }
+        static void AccumulateRuntimePlatformFromPhotonProps(IDictionary props, ref int scoreQ, ref int scoreP)
+        {
+            if (props == null) return;
+
+            foreach (DictionaryEntry kv in props)
+            {
+                ScorePlatformFromPhotonValue(kv.Key, ref scoreQ, ref scoreP);
+                ScorePlatformFromPhotonValue(kv.Value, ref scoreQ, ref scoreP);
+            }
+        }
+
+        static void ScorePlatformFromPhotonValue(object val, ref int scoreQ, ref int scoreP)
+        {
+            if (val == null) return;
+
+            switch (val)
+            {
+                case string s when TryParseRuntimePlatform(s.Trim(), out var rp):
+                    AddRuntimePlatformScore(rp, ref scoreQ, ref scoreP);
+                    return;
+                case ICollection col when !(val is IDictionary):
+                    foreach (var item in col)
+                        ScorePlatformFromPhotonValue(item, ref scoreQ, ref scoreP);
+                    return;
+            }
+
+            long num;
+            if (TryPhotonIntegral(val, out num) && num >= int.MinValue && num <= int.MaxValue)
+            {
+                int i = (int)num;
+                if (System.Enum.IsDefined(typeof(RuntimePlatform), i))
+                    AddRuntimePlatformScore((RuntimePlatform)i, ref scoreQ, ref scoreP);
+            }
+        }
+
+        static bool TryParseRuntimePlatform(string s, out RuntimePlatform rp)
+        {
+            try
+            {
+                return global::System.Enum.TryParse(s, ignoreCase: true, out rp);
+            }
+            catch
+            {
+                rp = default;
+                return false;
+            }
+        }
+
+        /// <remarks>Photon may box byte/short/long for small integers.</remarks>
+        static bool TryPhotonIntegral(object v, out long n)
+        {
+            switch (v)
+            {
+                case byte x: n = x; return true;
+                case sbyte x: n = x; return true;
+                case short x: n = x; return true;
+                case ushort x: n = x; return true;
+                case int x: n = x; return true;
+                case uint x: n = x; return true;
+                case long x: n = x; return true;
+                case ulong x:
+                    if (x > long.MaxValue) break;
+                    n = (long)x;
+                    return true;
+                default:
+                    if (v is float || v is double || v is decimal)
+                        break;
+                    return long.TryParse(v.ToString()?.Trim(), out n);
+            }
+
+            n = 0;
+            return false;
+        }
+
+        /// <remarks>Maps Unity player build targets; Oculus PC reports Windows/Linux…, Quest storefront = Android.</remarks>
+        static void AddRuntimePlatformScore(RuntimePlatform rp, ref int scoreQ, ref int scoreP)
+        {
+            switch (rp)
+            {
+                case RuntimePlatform.Android:
+                    scoreQ += 8;
+                    break;
+                case RuntimePlatform.IPhonePlayer:
+                    scoreQ += 6;
+                    break;
+                case RuntimePlatform.WindowsPlayer:
+                case RuntimePlatform.LinuxPlayer:
+                case RuntimePlatform.OSXPlayer:
+                case RuntimePlatform.WindowsEditor:
+                case RuntimePlatform.LinuxEditor:
+                case RuntimePlatform.OSXEditor:
+                    scoreP += 8;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        static int ReadVrrigSdkIndexOrSentinel(VRRig rig)
+        {
+            try
+            {
+                if (rig != null && _vrrigSdkIndexField != null && _vrrigSdkIndexField.GetValue(rig) is int i)
+                    return i;
+            }
+            catch { }
+
+            return int.MinValue;
+        }
+
+        static bool TryInferFromVrrigSdkVersusLocal(int remoteActorNumber, out string guess)
+        {
+            guess = null;
+            var localP = PhotonNetwork.LocalPlayer;
+            if (localP == null || !PhotonNetwork.InRoom) return false;
+
+            RuntimePlatform plat = UnityEngine.Application.platform;
+            bool localLikelyPc = plat == RuntimePlatform.WindowsPlayer ||
+                                 plat == RuntimePlatform.LinuxPlayer ||
+                                 plat == RuntimePlatform.OSXPlayer ||
+                                 plat == RuntimePlatform.WindowsEditor ||
+                                 plat == RuntimePlatform.LinuxEditor ||
+                                 plat == RuntimePlatform.OSXEditor;
+            if (!localLikelyPc) return false;
+
+            var lrig = FindRigForActor(localP.ActorNumber);
+            var rrig = FindRigForActor(remoteActorNumber);
+            if (lrig == null || rrig == null) return false;
+
+            int ls = ReadVrrigSdkIndexOrSentinel(lrig);
+            int rs = ReadVrrigSdkIndexOrSentinel(rrig);
+            if (ls == int.MinValue || rs == int.MinValue || ls == rs) return false;
+
+            var rp = FindPhotonPlayerByActor(remoteActorNumber);
+            string remoteResolvedUid = ResolveUserIdForActor(remoteActorNumber, rp);
+            bool remoteSteamEvidence = PhotonUserIdLooksLikeSteam(remoteResolvedUid)
+                                       || CustomPropsContainBoundedSteamAccount(rp?.CustomProperties);
+
+            if (remoteSteamEvidence)
+                return false;
+
+            guess = "QUEST";
+            return true;
+        }
+
+        /// <summary>
+        /// True when Unity exposes a packaged-app path (Quest / Meta storefront builds are delivered as APK
+        /// or split bundles). Some split installs omit <c>.apk</c> in these paths; use
+        /// <see cref="IsLikelyQuestStorefrontStandaloneRuntime"/> for a headset-aware fallback.
+        /// </summary>
+        public static bool UsesAndroidUnityApkPathMarkers()
+        {
+            try
+            {
+                return LooksLikeUnityAndroidPackagePath(UnityEngine.Application.dataPath)
+                       || LooksLikeUnityAndroidPackagePath(UnityEngine.Application.streamingAssetsPath);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Best-effort standalone Android / Quest-tier runtime (APK path fragment or known HMD model).
+        /// </summary>
+        public static bool IsLikelyQuestStorefrontStandaloneRuntime()
+        {
+            if (UnityEngine.Application.platform != RuntimePlatform.Android)
+                return false;
+            if (UsesAndroidUnityApkPathMarkers())
+                return true;
+            return LooksLikeStandaloneVrAndroidHeadset();
+        }
+
+        static bool LooksLikeUnityAndroidPackagePath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            if (path.IndexOf(".apk", System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (path.IndexOf(".apks", System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (path.IndexOf("apk!", System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            return path.StartsWith("jar:file:", System.StringComparison.OrdinalIgnoreCase)
+                   && path.IndexOf(".apk", System.StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        static bool LooksLikeStandaloneVrAndroidHeadset()
+        {
+            string dm = (SystemInfo.deviceModel ?? "").ToLowerInvariant();
+            if (dm.Length == 0) return false;
+            if (dm.IndexOf("quest", System.StringComparison.Ordinal) >= 0) return true;
+            if (dm.IndexOf("oculus", System.StringComparison.Ordinal) >= 0) return true;
+            if (dm.IndexOf("meta ", System.StringComparison.Ordinal) >= 0) return true;
+            if (dm.IndexOf("pico", System.StringComparison.Ordinal) >= 0) return true;
+            return false;
+        }
+
+        static string LocalUnityPlatformFallback()
+        {
+            switch (UnityEngine.Application.platform)
+            {
+                case RuntimePlatform.Android:
+                    return "QUEST";
+                case RuntimePlatform.WindowsPlayer:
+                case RuntimePlatform.LinuxPlayer:
+                case RuntimePlatform.OSXEditor:
+                case RuntimePlatform.LinuxEditor:
+                case RuntimePlatform.WindowsEditor:
+                    return "STEAM";
+                default:
+                    return "?";
+            }
+        }
+
+        static string BuildCustomPropertiesBlob(IDictionary props)
+        {
+            if (props == null || props.Count == 0) return string.Empty;
+
+            var parts = new List<string>();
+            foreach (DictionaryEntry kv in props)
+            {
+                string k = kv.Key?.ToString() ?? "";
+                string v = SerializeCustomPropertyValue(kv.Value);
+                parts.Add($"{k.ToLowerInvariant()}={v}");
+            }
+            parts.Sort(System.StringComparer.Ordinal);
+            return string.Join("|", parts);
+        }
+
+        static string SerializeCustomPropertyValue(object val)
+        {
+            if (val == null) return "null";
+
+            switch (val)
+            {
+                case string s:
+                    return s.ToLowerInvariant();
+                case bool b:
+                    return b ? "true" : "false";
+                case ICollection col when !(val is IDictionary): // Photon sometimes syncs nested collections
+                    {
+                        var items = new List<string>();
+                        foreach (var item in col)
+                            items.Add(SerializeCustomPropertyValue(item));
+                        items.Sort(System.StringComparer.Ordinal);
+                        return "[" + string.Join(",", items) + "]";
+                    }
+                default:
+                    return val.ToString().ToLowerInvariant();
+            }
+        }
+
+        /// <remarks>
+        /// Tuned for strings that often appear when games encode RuntimePlatform / store / Oculus vs Android.
+        /// OpenXR appears on both stacks — not used alone.
+        /// </remarks>
+        static void ScorePlatformSignals(string lowered, ref int scoreQ, ref int scoreP)
+        {
+            // Quest-ish — avoid substring "standalone" alone (matches StandaloneWindows)
+            foreach (var s in new[]
+                     {
+                         "android", "standaloneandroid",
+                         "oculus_standalone", "oculusstandalone", "meta quest", "meta_quest",
+                         "isoculusquest", "quest2", "quest 2", "quest3", "quest 3",
+                         "is_quest", "isqueststandalone",
+                         "pico neo", "pico4", "pico 4"
+                     })
+            {
+                if (lowered.IndexOf(s, System.StringComparison.Ordinal) >= 0)
+                    scoreQ += 4;
+            }
+
+            if (BlobIndicatesSteam(lowered))
+                scoreP += 8;
+
+            // PC-ish — Windows / Steam / Linux + PC Oculus/OpenVR combos
+            foreach (var s in new[]
+                     {
+                         "standalonewindows", "standalonewindows64", "windowsplayer",
+                         "standalone_win", "windowseditor",
+                         "windows_player",
+                         "oculus_windows", "oculuspc", "oculus pc",
+                         "openvrwin64", "openvr/oculus_pc",
+                         "rift",
+                         "linuxplayer", "linuxeditor"
+                     })
+            {
+                if (lowered.IndexOf(s, System.StringComparison.Ordinal) >= 0)
+                    scoreP += 4;
+            }
+
+            if (lowered.IndexOf("standaloneosx", System.StringComparison.Ordinal) >= 0
+                || lowered.IndexOf("osxplayer", System.StringComparison.Ordinal) >= 0)
+                scoreP += 3;
         }
 
         static VRRig FindRigForActor(int actorNumber)
         {
-            // VRRigs in GT don't have PhotonView — match via playerNameVisible
+            if (actorNumber <= 0) return null;
+
+            // Scoreboard binds actorNr → networked rig (much more reliable than nick matching)
+            foreach (var sbLine in FindObjectsOfType<GorillaPlayerScoreboardLine>(true))
+            {
+                if (sbLine == null || sbLine.playerActorNumber != actorNumber) continue;
+                var linked = sbLine.playerVRRig;
+                if (linked != null && !linked.isOfflineVRRig)
+                    return linked;
+            }
+
             Player target = null;
             foreach (var p in PhotonNetwork.PlayerList)
             {
                 if (p.ActorNumber == actorNumber) { target = p; break; }
             }
+
             if (target == null) return null;
+
             string targetName = (target.NickName ?? "").ToUpper().Trim();
             if (string.IsNullOrEmpty(targetName)) return null;
 
@@ -874,9 +2019,9 @@ namespace YizziCamModV2.Comps
                 if (rigName != targetName) continue;
                 if (rig.gameObject.activeInHierarchy)
                     return rig;
-                if (inactiveFallback == null)
-                    inactiveFallback = rig;
+                inactiveFallback ??= rig;
             }
+
             return inactiveFallback;
         }
 
@@ -961,6 +2106,22 @@ namespace YizziCamModV2.Comps
                         {
                             var val = player.CustomProperties[key];
                             sw.WriteLine($"  [{key}] ({val?.GetType().Name}) = {val}");
+                        }
+                    }
+
+                    sw.WriteLine("\n=== ALL PlayerList CustomProperties (+ mod platform guess) ===");
+                    if (PhotonNetwork.InRoom)
+                    {
+                        foreach (var pl in PhotonNetwork.PlayerList)
+                        {
+                            int sdkI = ReadVrrigSdkIndexOrSentinel(FindRigForActor(pl.ActorNumber));
+                            string sdkS = sdkI == int.MinValue ? "?" : sdkI.ToString();
+                            sw.WriteLine(
+                                $"  --- actor {pl.ActorNumber} local={pl.IsLocal} nick={(pl.NickName ?? "")} userid={(pl.UserId ?? "")} rig_sdk={sdkS} modPlatform={DetectPlatform(pl.ActorNumber)} ---");
+                            if (pl.CustomProperties == null || pl.CustomProperties.Count == 0)
+                                sw.WriteLine("    (no props)");
+                            else foreach (var key in pl.CustomProperties.Keys)
+                                sw.WriteLine($"    [{key}] ({pl.CustomProperties[key]?.GetType().Name}) = {pl.CustomProperties[key]}");
                         }
                     }
 
