@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections;
+using System.Text.RegularExpressions;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -43,6 +44,21 @@ namespace YizziCamModV2
         public Text ClipLagStatusText;
         public GameObject GeneralPage;
         public GameObject ReportPage;
+        public GameObject MusicPage;
+        public GameObject PinSelectorPage;
+        public GameObject ExtraPageUnpinButton;
+        Text MusicSongNameText;
+        Text MusicTimeText;
+        Text MusicClockText;
+        string _mediaSongLine    = "♪  —";
+        string _mediaArtistLine  = "";
+        double _mediaElapsed     = 0;
+        double _mediaEndTime     = 0;
+        bool   _mediaPaused      = true;
+        DateTime _mediaFetchTime = DateTime.MinValue;
+        float  _lastMediaAutoRefresh = -999f;
+        volatile bool _mediaBusy;
+        volatile bool _mediaRefreshed;
         public Text GenWatermarkText;
         public Text GenRawRotText;
         public Text GenSummonText;
@@ -186,14 +202,19 @@ namespace YizziCamModV2
             ApplyHomePagePinExtraFollowLayout(miscSlotPrefabLocal);
 
             if (fpSlotGo != null)
-                SetOrCreateButtonLabel(fpSlotGo, "FOLLOW\nPLAYER");
-            RefreshPinnedShortcutLabel();
+                SetOrCreateButtonLabel(fpSlotGo, "FOLLOW\nPLAYER", sizeOverride: 20);
 
+            var fpvBtn = GameObject.Find("CameraTablet(Clone)/MainPage/FPVButton");
+            if (fpvBtn != null)
+                SetOrCreateButtonLabel(fpvBtn, "FIRST\nPERSON", sizeOverride: 20);
             var greenCoverTpl = GameObject.Find("CameraTablet(Clone)/MiscPage/GreenScreenButton");
             AddMeshLabelCoverFromMiscGreen(fpSlotGo, greenCoverTpl, MeshLabelCoverFollowPlayerSlot);
             AddMeshLabelCoverFromMiscGreen(MainPinSlotButton, greenCoverTpl, MeshLabelCoverPinMiscSlot);
             AddMeshLabelCoverFromMiscGreen(MainPinnedShortcutButton, greenCoverTpl, MeshLabelCoverExtraVsFollowBleedSlot);
             StripMiscLettersFromPrefabTextOnHosts(fpSlotGo, MainPinSlotButton, MainPinnedShortcutButton);
+            StripMainPageBakedLabels();
+            // Labels must be applied AFTER stripping so the new text isn't disabled by the strip pass.
+            RefreshPinnedShortcutLabel();
 
             // Bundled tablet prefab may still contain a banana mesh; code-only removal does not edit the asset bundle.
             RemoveBundledBananaVisualFromTablet();
@@ -252,6 +273,33 @@ namespace YizziCamModV2
         {
             if (init)
             {
+                // ── Music page: auto-refresh + live countdown + system clock ──────────
+                if (MusicPage != null && MusicPage.activeSelf)
+                {
+                    if (!_mediaBusy && Time.time - _lastMediaAutoRefresh > 3f)
+                    {
+                        _lastMediaAutoRefresh = Time.time;
+                        RefreshMediaInfo();
+                    }
+                    if (_mediaRefreshed)
+                    {
+                        _mediaRefreshed = false;
+                        if (MusicSongNameText != null) MusicSongNameText.text = _mediaSongLine;
+                    }
+                    // Live countdown: subtract time elapsed since last fetch (only if playing)
+                    if (MusicTimeText != null && _mediaFetchTime != DateTime.MinValue)
+                    {
+                        double addSec   = _mediaPaused ? 0 : (DateTime.UtcNow - _mediaFetchTime).TotalSeconds;
+                        double remaining = Math.Max(0, _mediaEndTime - (_mediaElapsed + addSec));
+                        int rm = (int)remaining / 60; int rs = (int)remaining % 60;
+                        string status = _mediaPaused ? "▐▐" : "▶";
+                        MusicTimeText.text = $"{_mediaArtistLine}  {status}  -{rm}:{rs:D2}";
+                    }
+                    // System clock top-right
+                    if (MusicClockText != null)
+                        MusicClockText.text = DateTime.Now.ToString("h:mm tt");
+                }
+
                 if (fpv)
                 {
                     if (camDisconnect)
@@ -564,6 +612,8 @@ namespace YizziCamModV2
             if (WeatherTimePage.activeSelf) WeatherTimePage.SetActive(false);
             if (CameraClipPage.activeSelf) CameraClipPage.SetActive(false);
             if (GeneralPage.activeSelf) GeneralPage.SetActive(false);
+            if (MusicPage != null && MusicPage.activeSelf) MusicPage.SetActive(false);
+            if (PinSelectorPage != null && PinSelectorPage.activeSelf) PinSelectorPage.SetActive(false);
             if (ReportPage != null && ReportPage.activeSelf)
             {
                 if (TabletReport.Instance != null && TabletReport.Instance.IsInDetail)
@@ -588,14 +638,51 @@ namespace YizziCamModV2
             if (WeatherTimePage.activeSelf) WeatherTimePage.SetActive(false);
             if (CameraClipPage.activeSelf) CameraClipPage.SetActive(false);
             if (GeneralPage.activeSelf) GeneralPage.SetActive(false);
+            if (MusicPage != null && MusicPage.activeSelf) MusicPage.SetActive(false);
             if (ReportPage != null && ReportPage.activeSelf) ReportPage.SetActive(false);
             if (FakeCameraGO.activeSelf) FakeCameraGO.SetActive(false);
+        }
+
+        public bool HasPinnedPage => !string.IsNullOrEmpty(PlayerPrefs.GetString(ExtraPinPrefKey, ""));
+
+        /// <summary>Show or hide the UnpinButton on a sub-page based on whether it is currently pinned.</summary>
+        public void SyncSubPageUnpin(string btnId)
+        {
+            GameObject page = btnId switch {
+                "WeatherTimeBtn" => WeatherTimePage,
+                "CameraClipBtn"  => CameraClipPage,
+                "GeneralBtn"     => GeneralPage,
+                "GridBtn_1_1"    => WardrobePage,
+                "GridBtn_1_2"    => ReportPage,
+                "MusicBtn"       => MusicPage,
+                _                => null
+            };
+            if (page == null) return;
+            var tf = page.transform.Find("UnpinButton");
+            if (tf == null) return;
+            string pinned = PlayerPrefs.GetString(ExtraPinPrefKey, "");
+            tf.gameObject.SetActive(!string.IsNullOrEmpty(pinned) && pinned == btnId);
+        }
+
+        /// <summary>Show the ExtraPageUnpinButton only when an action-only page (Save Settings / Lobby Hop) is pinned.</summary>
+        public void SyncExtraPageUnpin()
+        {
+            if (ExtraPageUnpinButton == null) return;
+            string id = PlayerPrefs.GetString(ExtraPinPrefKey, "");
+            ExtraPageUnpinButton.SetActive(id == "SaveSettsBtn" || id == "LobbyHopBtn" || id == "ExtraMiscBtn");
         }
 
         public void PinExtraChoice(string yzGButtonName)
         {
             if (string.IsNullOrEmpty(yzGButtonName)) return;
             PlayerPrefs.SetString(ExtraPinPrefKey, yzGButtonName);
+            PlayerPrefs.Save();
+            RefreshPinnedShortcutLabel();
+        }
+
+        public void UnpinExtraChoice()
+        {
+            PlayerPrefs.DeleteKey(ExtraPinPrefKey);
             PlayerPrefs.Save();
             RefreshPinnedShortcutLabel();
         }
@@ -624,6 +711,8 @@ namespace YizziCamModV2
                 case "LobbyHopBtn": return "LOBBY\nHOP";
                 case "GridBtn_1_1": return "WARD\nROBE";
                 case "GridBtn_1_2": return "REPO\nRT";
+                case "MusicBtn":       return "MUSIC\nCTRL";
+                case "ExtraMiscBtn":  return "MISC";
                 default: return "EXTRA\nOPTS";
             }
         }
@@ -681,6 +770,7 @@ namespace YizziCamModV2
                 case "WeatherTimeBtn":
                     WeatherTimePage.SetActive(true);
                     SyncWeatherPageStatusTexts();
+                    WeatherTimePage.transform.Find("UnpinButton")?.gameObject.SetActive(true);
                     break;
                 case "CameraClipBtn":
                     CameraClipPage.SetActive(true);
@@ -688,13 +778,15 @@ namespace YizziCamModV2
                         ClipLagStatusText.text = fpvClipping ? "CLIP LAGGING:ON" : "CLIP LAGGING:OFF";
                     if (ClipLagValueText != null)
                         ClipLagValueText.text = fpvClipLag.ToString("F2");
+                    CameraClipPage.transform.Find("UnpinButton")?.gameObject.SetActive(true);
                     break;
                 case "GeneralBtn":
                     GeneralPage.SetActive(true);
                     SyncGeneralPageStatusTexts();
+                    GeneralPage.transform.Find("UnpinButton")?.gameObject.SetActive(true);
                     break;
                 case "SaveSettsBtn":
-                    MainPage.SetActive(true);
+                    // Action-only — execute the save then show ExtraPage with UNPIN visible
                     {
                         var ui = GetComponent<UI>();
                         Settings.Save(
@@ -711,18 +803,37 @@ namespace YizziCamModV2
                             fpvClipLag
                         );
                     }
+                    ExtraPage.SetActive(true);
+                    SyncExtraPageUnpin();
                     break;
                 case "LobbyHopBtn":
-                    MainPage.SetActive(true);
+                    // Action-only — execute lobby hop then show ExtraPage with UNPIN visible
                     LobbyHop();
+                    ExtraPage.SetActive(true);
+                    SyncExtraPageUnpin();
+                    break;
+                case "ExtraMiscBtn":
+                    // MISC has no sub-page of its own — open MiscPage directly
+                    MiscReturnToExtraInsteadOfMain = false;
+                    MiscPage.SetActive(true);
                     break;
                 case "GridBtn_1_1":
                     WardrobePage.SetActive(true);
                     TabletWardrobe.Instance?.RefreshDisplay();
+                    WardrobePage.transform.Find("UnpinButton")?.gameObject.SetActive(true);
                     break;
                 case "GridBtn_1_2":
                     ReportPage.SetActive(true);
                     TabletReport.Instance?.Refresh();
+                    ReportPage.transform.Find("UnpinButton")?.gameObject.SetActive(true);
+                    break;
+                case "MusicBtn":
+                    if (MusicPage != null)
+                    {
+                        MusicPage.SetActive(true);
+                        RefreshMediaInfo();
+                        MusicPage.transform.Find("UnpinButton")?.gameObject.SetActive(true);
+                    }
                     break;
                 default:
                     MainPage.SetActive(true);
@@ -762,7 +873,46 @@ namespace YizziCamModV2
             pinTf.localPosition = new Vector3(fpLocal.x, extraPos.y, fpLocal.z);
         }
 
-        /// <summary>Hide prefab TMP/Text layers that still show MISC (home page clones / shared mesh labels).</summary>
+        /// <summary>Disable only the MISC and FOLLOW baked labels on the MainPage Canvas and any 3D TextMesh on MainPage buttons.</summary>
+        void StripMainPageBakedLabels()
+        {
+            var mainCanvas = GameObject.Find("CameraTablet(Clone)/MainPage/Canvas");
+            if (mainCanvas != null)
+            {
+                foreach (var tmp in mainCanvas.GetComponentsInChildren<TMP_Text>(true))
+                {
+                    if (tmp == null) continue;
+                    if (IsMiscOrFollow(tmp.text)) tmp.enabled = false;
+                }
+                foreach (var tx in mainCanvas.GetComponentsInChildren<Text>(true))
+                {
+                    if (tx == null) continue;
+                    if (IsMiscOrFollow(tx.text)) tx.enabled = false;
+                }
+            }
+
+            // Also blank any 3D TextMesh labels on MainPage button objects that say MISC or FOLLOW.
+            var mainPage = GameObject.Find("CameraTablet(Clone)/MainPage");
+            if (mainPage != null)
+            {
+                foreach (var tm in mainPage.GetComponentsInChildren<TextMesh>(true))
+                {
+                    if (tm == null || !IsMiscOrFollow(tm.text)) continue;
+                    tm.text = "";
+                    var mr = tm.GetComponent<MeshRenderer>();
+                    if (mr != null) mr.enabled = false;
+                }
+            }
+
+            bool IsMiscOrFollow(string s)
+            {
+                if (string.IsNullOrEmpty(s)) return false;
+                return s.IndexOf("misc", StringComparison.OrdinalIgnoreCase) >= 0
+                    || s.IndexOf("follow", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
+        /// <summary>Blank TextMesh plaques and disable TMP/Text containing "misc" on these specific button hosts.</summary>
         void StripMiscLettersFromPrefabTextOnHosts(params GameObject[] hosts)
         {
             if (hosts == null) return;
@@ -770,57 +920,31 @@ namespace YizziCamModV2
             {
                 if (host == null) continue;
 
-                Transform labelCanvasTf = host.transform.Find("LabelCanvas");
-                Transform labelTf = labelCanvasTf != null ? labelCanvasTf.Find("Label") : null;
-                RectTransform labelRt = labelTf != null ? labelTf.GetComponent<RectTransform>() : null;
+                // Legacy 3D TextMesh plaques — blank only if the text looks like a baked MISC label
+                foreach (var tm in host.GetComponentsInChildren<TextMesh>(true))
+                {
+                    if (tm == null) continue;
+                    if (IsMiscLikeText(tm.text)) tm.text = "";
+                }
 
+                // TMP_Text — only disable if the text contains "misc"
                 foreach (var tmp in host.GetComponentsInChildren<TMP_Text>(true))
                 {
                     if (tmp == null) continue;
-                    if (ShouldKeepMainPageLabelTMP(tmp, labelRt)) continue;
-                    if (IsMiscLikeText(tmp.text))
-                        tmp.enabled = false;
+                    if (IsMiscLikeText(tmp.text)) tmp.enabled = false;
                 }
+
+                // Legacy Unity UI Text — only disable if the text contains "misc"
                 foreach (var tx in host.GetComponentsInChildren<Text>(true))
                 {
                     if (tx == null) continue;
-                    if (labelRt != null && tx.rectTransform != null &&
-                        SameRectHierarchy(tx.rectTransform, labelRt))
-                        continue;
-                    if (IsMiscLikeText(tx.text))
-                        tx.enabled = false;
+                    if (IsMiscLikeText(tx.text)) tx.enabled = false;
                 }
             }
 
-            bool ShouldKeepMainPageLabelTMP(TMP_Text tmp, RectTransform programmaticLabelRt)
-            {
-                if (programmaticLabelRt == null) return false;
-                var r = tmp.rectTransform;
-                while (r != null)
-                {
-                    if (r == programmaticLabelRt)
-                        return true;
-                    r = r.parent as RectTransform;
-                }
-                return false;
-            }
-
-            bool SameRectHierarchy(RectTransform a, RectTransform b)
-            {
-                Transform t = a;
-                while (t != null)
-                {
-                    if (t == b) return true;
-                    t = t.parent;
-                }
-                return false;
-            }
-
-            bool IsMiscLikeText(string s)
-            {
-                return !string.IsNullOrEmpty(s) &&
-                       s.IndexOf("misc", StringComparison.OrdinalIgnoreCase) >= 0;
-            }
+            bool IsMiscLikeText(string s) =>
+                !string.IsNullOrEmpty(s) &&
+                s.IndexOf("misc", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         /// <summary>Follow sits on misc plaque — crank Z forward hard so green slab buries baked MISC; FOLLOW label sits on canvas above.</summary>
@@ -872,12 +996,23 @@ namespace YizziCamModV2
             MainPinnedShortcutButton = extraOptBtn;
             Buttons.Add(extraOptBtn);
 
+
             var backTemplate = GameObject.Find("CameraTablet(Clone)/MiscPage/BackButton");
             var extraBackBtn = Instantiate(backTemplate, page.transform);
             extraBackBtn.name = "ExtraBackButton";
             extraBackBtn.transform.localPosition = backTemplate.transform.localPosition + new Vector3(0f, 0.03f, 0f);
             AddButtonLabel(extraBackBtn, "BACK");
             Buttons.Add(extraBackBtn);
+
+            // UNPIN button for action-only pins (Save Settings / Lobby Hop) that have no sub-page
+            var extraUnpin = Instantiate(backTemplate, page.transform);
+            extraUnpin.name = "ExtraPageUnpinButton";
+            extraUnpin.transform.localPosition = backTemplate.transform.localPosition + new Vector3(0f, 0.03f, -1.38f);
+            AddButtonLabel(extraUnpin, "UNPIN");
+            extraUnpin.SetActive(false);
+            Buttons.Add(extraUnpin);
+            extraUnpin.AddComponent<YzGButton>();
+            ExtraPageUnpinButton = extraUnpin;
 
             AddPageTitle(page, backTemplate, "EXTRA OPTIONS");
 
@@ -899,7 +1034,14 @@ namespace YizziCamModV2
                 break;
             }
 
+            var wbUnpin = WardrobePage.transform.Find("UnpinButton");
+            if (wbUnpin != null)
+                wbUnpin.localPosition = backTemplate.transform.localPosition + new Vector3(0f, 0.70f, 0f);
+
             PopulateWardrobePage(WardrobePage, backTemplate);
+
+            MusicPage = CreateSubPage(backTemplate, "MusicPage", "MusicBackButton", "MUSIC CONTROLS");
+            PopulateMusicPage(MusicPage, backTemplate);
 
             ReportPage = CreateSubPage(backTemplate, "ReportPage", "RPBackButton", "REPORT");
             var rpBack = ReportPage.transform.Find("RPBackButton");
@@ -908,33 +1050,100 @@ namespace YizziCamModV2
                 rpBack.localScale = rpBack.localScale * 0.7f;
                 rpBack.localPosition += new Vector3(0f, -0.04f, 0.05f);
             }
+            var rpUnpin = ReportPage.transform.Find("UnpinButton");
+            if (rpUnpin != null)
+            {
+                rpUnpin.localScale    = rpUnpin.localScale * 0.7f;
+                // Same Y as rpBack final position (backTemplate.y + 0.03 - 0.04 = backTemplate.y - 0.01)
+                rpUnpin.localPosition = backTemplate.transform.localPosition
+                    + new Vector3(0f, -0.01f, -1.18f);
+            }
             var rpComp = ReportPage.GetComponent<TabletReport>();
             if (rpComp == null) rpComp = ReportPage.AddComponent<TabletReport>();
             rpComp.Init(ReportPage.transform, backTemplate);
 
+            // ── Pin Selector Page ──────────────────────────────────────────────────
+            // Same grid layout as Extra Options but pressing a button pins it and
+            // returns to the home page instead of navigating to the page.
+            PinSelectorPage = Instantiate(MiscPage, MiscPage.transform.parent);
+            PinSelectorPage.name = "PinSelectorPage";
+            foreach (Transform ch in PinSelectorPage.transform)
+            {
+                if (ch.name == "Canvas")
+                    foreach (Transform cc in ch) Destroy(cc.gameObject);
+                else
+                    Destroy(ch.gameObject);
+            }
+            AddPageTitle(PinSelectorPage, backTemplate, "SELECT PAGE TO PIN");
+            {
+                string[] psLabels = {
+                    "WEATHER\n& TIME", "CAMERA\nCLIP", "GENER\nAL", "SAVE\nSETTS", "LOBBY\nHOP",
+                    "WARD\nROBE",      "REPO\nRT",      "MISC",      "MUSIC\nCTRL"
+                };
+                string[] psNames = {
+                    "PS_WeatherTimeBtn", "PS_CameraClipBtn", "PS_GeneralBtn", "PS_SaveSettsBtn", "PS_LobbyHopBtn",
+                    "PS_WardrobeBtn",    "PS_ReportBtn",     "PS_MiscBtn",    "PS_MusicBtn"
+                };
+                float[] psRow0Z = { -0.10f, -0.38f, -0.66f, -0.94f, -1.22f };
+                float[] psRow1Z = { -0.24f, -0.52f, -0.80f, -1.08f };
+                float[] psRowY  = { 0.57f, 0.30f };
+                for (int col = 0; col < 5; col++)
+                {
+                    var b = Instantiate(backTemplate, PinSelectorPage.transform);
+                    b.name = psNames[col];
+                    b.transform.localPosition = backTemplate.transform.localPosition
+                        + new Vector3(0f, psRowY[0], psRow0Z[col]);
+                    AddButtonLabel(b, psLabels[col]);
+                    Buttons.Add(b); b.AddComponent<YzGButton>();
+                }
+                for (int col = 0; col < 4; col++)
+                {
+                    var b = Instantiate(backTemplate, PinSelectorPage.transform);
+                    b.name = psNames[5 + col];
+                    b.transform.localPosition = backTemplate.transform.localPosition
+                        + new Vector3(0f, psRowY[1], psRow1Z[col]);
+                    AddButtonLabel(b, psLabels[5 + col]);
+                    Buttons.Add(b); b.AddComponent<YzGButton>();
+                }
+                var psCancel = Instantiate(backTemplate, PinSelectorPage.transform);
+                psCancel.name = "PSCancelButton";
+                psCancel.transform.localPosition = backTemplate.transform.localPosition + new Vector3(0f, 0.03f, 0f);
+                AddButtonLabel(psCancel, "BACK");
+                Buttons.Add(psCancel); psCancel.AddComponent<YzGButton>();
+            }
+            PinSelectorPage.SetActive(false);
+
+            // Row 0: 5 buttons  Row 1: 4 buttons  —  spacing 0.28, rows closer together
             string[] btnLabels = {
-                "WEATHER\n& TIME", "CAMERA\nCLIP", "GENER\nAL", "SAVE\nSETTS",
-                "LOBBY\nHOP", "WARD\nROBE", "REPO\nRT", "MISC"
+                "WEATHER\n& TIME", "CAMERA\nCLIP", "GENER\nAL", "SAVE\nSETTS", "LOBBY\nHOP",
+                "WARD\nROBE",      "REPO\nRT",      "MISC",      "MUSIC\nCTRL"
             };
             string[] btnNames = {
-                "WeatherTimeBtn", "CameraClipBtn", "GeneralBtn", "SaveSettsBtn",
-                "LobbyHopBtn", "GridBtn_1_1", "GridBtn_1_2", "ExtraMiscBtn"
+                "WeatherTimeBtn", "CameraClipBtn", "GeneralBtn", "SaveSettsBtn", "LobbyHopBtn",
+                "GridBtn_1_1",    "GridBtn_1_2",   "ExtraMiscBtn", "MusicBtn"
             };
-            int btnNum = 0;
-            int[] colsPerRow = { 4, 4 };
-            float[] rowZOffset = { -0.25f, -0.40f };
-            for (int row = 0; row < 2; row++)
+            // Row 0 (5): -0.10, -0.38, -0.66, -0.94, -1.22
+            // Row 1 (4): -0.24, -0.52, -0.80, -1.08   (staggered half-step, naturally centered)
+            float[] row0Z = { -0.10f, -0.38f, -0.66f, -0.94f, -1.22f };
+            float[] row1Z = { -0.24f, -0.52f, -0.80f, -1.08f };
+            float[] rowY  = { 0.57f, 0.30f };
+            for (int col = 0; col < 5; col++)
             {
-                for (int col = 0; col < colsPerRow[row]; col++)
-                {
-                    var gridBtn = Instantiate(backTemplate, page.transform);
-                    gridBtn.name = btnNames[btnNum];
-                    gridBtn.transform.localPosition = backTemplate.transform.localPosition
-                        + new Vector3(0f, 0.57f - row * 0.3f, rowZOffset[row] - col * 0.3f);
-                    AddButtonLabel(gridBtn, btnLabels[btnNum]);
-                    Buttons.Add(gridBtn);
-                    btnNum++;
-                }
+                var gridBtn = Instantiate(backTemplate, page.transform);
+                gridBtn.name = btnNames[col];
+                gridBtn.transform.localPosition = backTemplate.transform.localPosition
+                    + new Vector3(0f, rowY[0], row0Z[col]);
+                AddButtonLabel(gridBtn, btnLabels[col]);
+                Buttons.Add(gridBtn);
+            }
+            for (int col = 0; col < 4; col++)
+            {
+                var gridBtn = Instantiate(backTemplate, page.transform);
+                gridBtn.name = btnNames[5 + col];
+                gridBtn.transform.localPosition = backTemplate.transform.localPosition
+                    + new Vector3(0f, rowY[1], row1Z[col]);
+                AddButtonLabel(gridBtn, btnLabels[5 + col]);
+                Buttons.Add(gridBtn);
             }
 
             var hLine = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -1349,6 +1558,181 @@ namespace YizziCamModV2
             if (FovText != null) ClipLagValueText.font = FovText.font;
         }
 
+        // ─── External Media Control (Spotify / YouTube / any Windows media player) ──
+        // Uses GorillaToolkit's QuickSong.exe (placed in %TEMP% by GorillaToolkit on startup)
+        // which queries Windows SMTC and returns JSON with Title, Artist, ElapsedTime, EndTime, Status.
+
+        [System.Runtime.InteropServices.DllImport("user32.dll",
+            CallingConvention = System.Runtime.InteropServices.CallingConvention.StdCall,
+            CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        static extern void keybd_event(uint bVk, uint bScan, uint dwFlags, uint dwExtraInfo);
+
+        public const uint MK_PLAY_PAUSE = 179u;
+        public const uint MK_NEXT       = 176u;
+        public const uint MK_PREV       = 177u;
+        public const uint MK_VOL_UP     = 0xAFu;
+        public const uint MK_VOL_DOWN   = 0xAEu;
+        public const uint MK_MUTE       = 0xADu;
+
+        public void SendMediaKeyPublic(uint vk)
+        {
+            keybd_event(vk, 0u, 0u, 0u);
+            keybd_event(vk, 0u, 2u, 0u);   // KEYEVENTF_KEYUP
+        }
+
+        static string QuickSongExePath =>
+            Path.Combine(Path.GetTempPath(), "QuickSong.exe");
+
+        public void RefreshMediaInfo()
+        {
+            if (_mediaBusy) return;
+            _mediaBusy = true;
+
+            Task.Run(() =>
+            {
+                string songLine = "♪  —", artistLine = "";
+                double elapsed = 0, endTime = 0;
+                bool paused = true;
+                DateTime fetchTime = DateTime.UtcNow;
+                try
+                {
+                    string exePath = QuickSongExePath;
+                    if (!File.Exists(exePath))
+                    {
+                        songLine = "♪  GorillaToolkit not found";
+                    }
+                    else
+                    {
+                        var psi = new System.Diagnostics.ProcessStartInfo(exePath, "-all")
+                        {
+                            UseShellExecute        = false,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError  = true,
+                            CreateNoWindow         = true
+                        };
+                        using (var proc = System.Diagnostics.Process.Start(psi))
+                        {
+                            string json = proc.StandardOutput.ReadToEnd();
+                            proc.WaitForExit(4000);
+                            var title   = Regex.Match(json, "\"Title\":\"([^\"]+)\"");
+                            var artist  = Regex.Match(json, "\"Artist\":\"([^\"]+)\"");
+                            var endM    = Regex.Match(json, "\"EndTime\":([0-9.]+)");
+                            var elM     = Regex.Match(json, "\"ElapsedTime\":([0-9.]+)");
+                            var statusM = Regex.Match(json, "\"Status\":\"([^\"]+)\"");
+                            if (title.Success)
+                            {
+                                songLine   = "♪  " + title.Groups[1].Value;
+                                artistLine = artist.Success ? artist.Groups[1].Value : "";
+                                endTime    = endM.Success ? double.Parse(endM.Groups[1].Value,
+                                    System.Globalization.CultureInfo.InvariantCulture) : 0;
+                                elapsed    = elM.Success ? double.Parse(elM.Groups[1].Value,
+                                    System.Globalization.CultureInfo.InvariantCulture) : 0;
+                                paused     = !statusM.Success ||
+                                    statusM.Groups[1].Value != "Playing";
+                            }
+                            else songLine = "♪  No media playing";
+                        }
+                    }
+                }
+                catch { songLine = "♪  —"; }
+
+                _mediaSongLine    = songLine;
+                _mediaArtistLine  = artistLine;
+                _mediaElapsed     = elapsed;
+                _mediaEndTime     = endTime;
+                _mediaPaused      = paused;
+                _mediaFetchTime   = fetchTime;
+                _mediaBusy        = false;
+                _mediaRefreshed   = true;
+            });
+        }
+
+        public void SyncMusicPageState()
+        {
+            if (MusicSongNameText != null) MusicSongNameText.text = _mediaSongLine;
+        }
+
+        void PopulateMusicPage(GameObject page, GameObject btnTemplate)
+        {
+            var bp = btnTemplate.transform.localPosition;
+
+            Text MakeLabel(string goName, Vector3 offset, Vector2 size, int fontSize)
+            {
+                var cGO = new GameObject(goName + "Canvas");
+                cGO.transform.SetParent(page.transform, false);
+                cGO.transform.localPosition = bp + offset;
+                cGO.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
+                cGO.transform.localScale    = Vector3.one * 0.003f;
+                var c = cGO.AddComponent<Canvas>(); c.renderMode = RenderMode.WorldSpace;
+                cGO.GetComponent<RectTransform>().sizeDelta = size;
+                var tGO = new GameObject(goName); tGO.transform.SetParent(cGO.transform, false);
+                var tRT = tGO.AddComponent<RectTransform>();
+                tRT.anchorMin = Vector2.zero; tRT.anchorMax = Vector2.one;
+                tRT.offsetMin = Vector2.zero; tRT.offsetMax = Vector2.zero;
+                var tx = tGO.AddComponent<Text>();
+                tx.fontSize = fontSize; tx.alignment = TextAnchor.MiddleCenter;
+                tx.color = TabletLabelYellow;
+                tx.horizontalOverflow = HorizontalWrapMode.Wrap;
+                tx.verticalOverflow   = VerticalWrapMode.Overflow;
+                if (FovText != null) tx.font = FovText.font;
+                return tx;
+            }
+
+            GameObject MakeBtn(string name, string label, Vector3 offset)
+            {
+                var btn = Instantiate(btnTemplate, page.transform);
+                btn.name = name; btn.transform.localPosition = bp + offset;
+                AddButtonLabel(btn, label); Buttons.Add(btn);
+                btn.AddComponent<YzGButton>(); return btn;
+            }
+
+            void MakeLine(Vector3 offset, Vector3 scale)
+            {
+                var ln = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                ln.transform.SetParent(page.transform, false);
+                ln.transform.localPosition = bp + offset;
+                ln.transform.localScale    = scale;
+                ln.GetComponent<MeshRenderer>().material.color = TabletLabelYellow;
+                Destroy(ln.GetComponent<Collider>());
+            }
+
+            // Button columns: Back≈Z=0, Unpin≈Z=-1.38.
+            // Playback: PREV pushed far left, NEXT far right.
+            // Volume: centered like before but shifted down.
+            const float cM = -0.69f;
+
+            // ── System clock (above Back button, top-left) ────────────────────────
+            MusicClockText = MakeLabel("MusicClock",
+                new Vector3(-0.02f, 0.77f, -0.05f), new Vector2(200f, 36f), 20);
+            MusicClockText.text = DateTime.Now.ToString("h:mm tt");
+
+            // ── Song name ──────────────────────────────────────────────────────────
+            MusicSongNameText = MakeLabel("MusicSong",
+                new Vector3(-0.02f, 0.63f, cM), new Vector2(430f, 52f), 23);
+            MusicSongNameText.text = _mediaSongLine;
+
+            // ── Artist | status | remaining time ──────────────────────────────────
+            MusicTimeText = MakeLabel("MusicTime",
+                new Vector3(-0.02f, 0.49f, cM), new Vector2(430f, 36f), 18);
+            MusicTimeText.text = "";
+
+            MakeLine(new Vector3(0f, 0.40f, cM), new Vector3(0.01f, 0.01f, 1.1f));
+
+            // ── Playback row (PREV far left, NEXT far right) ───────────────────────
+            MakeBtn("MusicPrevBtn",      "|<\nPREV",    new Vector3(0f, 0.30f, -0.10f));
+            MakeBtn("MusicPlayPauseBtn", "PLAY\nPAUSE", new Vector3(0f, 0.30f, cM));
+            MakeBtn("MusicNextBtn",      "NEXT\n>|",    new Vector3(0f, 0.30f, -1.28f));
+
+            MakeLine(new Vector3(0f, 0.20f, cM), new Vector3(0.01f, 0.01f, 1.1f));
+
+            // ── Volume row (slightly lower than playback) ──────────────────────────
+            MakeBtn("MusicVolDownBtn", "VOL-", new Vector3(0f, 0.05f, -0.35f));
+            MakeBtn("MusicMuteBtn",    "MUTE", new Vector3(0f, 0.05f, cM));
+            MakeBtn("MusicVolUpBtn",   "VOL+", new Vector3(0f, 0.05f, -1.04f));
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+
         GameObject CreateSubPage(GameObject btnTemplate, string pageName, string backBtnName, string pageTitle)
         {
             var subPage = Instantiate(MiscPage, MiscPage.transform.parent);
@@ -1371,6 +1755,15 @@ namespace YizziCamModV2
             AddButtonLabel(backBtn, "BACK");
             Buttons.Add(backBtn);
             backBtn.AddComponent<YzGButton>();
+
+            var unpinBtn = Instantiate(btnTemplate, subPage.transform);
+            unpinBtn.name = "UnpinButton";
+            unpinBtn.transform.localPosition = btnTemplate.transform.localPosition + new Vector3(0f, 0.03f, -1.38f);
+            AddButtonLabel(unpinBtn, "UNPIN");
+            unpinBtn.SetActive(false);
+            Buttons.Add(unpinBtn);
+            unpinBtn.AddComponent<YzGButton>();
+
             AddPageTitle(subPage, btnTemplate, pageTitle);
             subPage.SetActive(false);
             return subPage;
@@ -1428,13 +1821,15 @@ namespace YizziCamModV2
             uit.color = TabletLabelYellow;
         }
 
-        void SetOrCreateButtonLabel(GameObject btn, string text)
+        void SetOrCreateButtonLabel(GameObject btn, string text, bool preserveSize = false, int sizeOverride = 0)
         {
+            int resolvedSize = sizeOverride > 0 ? sizeOverride : TabletWorldButtonFontSize;
+
             Transform labelPath = btn.transform.Find("LabelCanvas/Label");
             if (labelPath != null && labelPath.GetComponent<Text>() is Text pathText)
             {
                 pathText.text = text;
-                RestoreOriginalOverlayLabelSizing(btn);
+                if (!preserveSize) pathText.fontSize = resolvedSize;
                 return;
             }
 
@@ -1442,24 +1837,27 @@ namespace YizziCamModV2
             if (tmp != null)
             {
                 tmp.text = text;
-                tmp.fontSize = TabletWorldButtonFontSize;
+                if (!preserveSize) tmp.fontSize = resolvedSize;
                 tmp.color = TabletLabelYellow;
+                tmp.enabled = true;
                 return;
             }
             var tmpUI = btn.GetComponentInChildren<TextMeshProUGUI>(true);
             if (tmpUI != null)
             {
                 tmpUI.text = text;
-                tmpUI.fontSize = TabletWorldButtonFontSize;
+                if (!preserveSize) tmpUI.fontSize = resolvedSize;
                 tmpUI.color = TabletLabelYellow;
+                tmpUI.enabled = true;
                 return;
             }
             var existingText = btn.GetComponentInChildren<Text>(true);
             if (existingText != null)
             {
                 existingText.text = text;
-                existingText.fontSize = TabletWorldButtonFontSize;
+                if (!preserveSize) existingText.fontSize = resolvedSize;
                 existingText.color = TabletLabelYellow;
+                existingText.enabled = true;
                 return;
             }
 

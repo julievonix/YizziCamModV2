@@ -32,6 +32,7 @@ namespace YizziCamModV2.Comps
                             CameraController.Instance.MiscReturnToExtraInsteadOfMain = false;
                             CameraController.Instance.MiscPage.SetActive(false);
                             CameraController.Instance.ExtraPage.SetActive(true);
+                            CameraController.Instance.SyncExtraPageUnpin();
                         }
                         else
                         {
@@ -40,12 +41,23 @@ namespace YizziCamModV2.Comps
                         }
                         break;
                     case "PinButton":
-                        CameraController.Instance.OpenPinnedShortcutFromMain();
+                        // If something is pinned, act as a quick-access shortcut to it.
+                        // If nothing is pinned, open the selector to choose what to pin.
+                        if (CameraController.Instance.HasPinnedPage)
+                            CameraController.Instance.OpenPinnedShortcutFromMain();
+                        else
+                        {
+                            CameraController.Instance.MainPage.SetActive(false);
+                            if (CameraController.Instance.PinSelectorPage != null)
+                                CameraController.Instance.PinSelectorPage.SetActive(true);
+                        }
                         break;
                     case "MainPinnedShortcutBtn":
+                        // "EXTRA OPTS" button — always opens the Extra Options grid
                         CameraController.Instance.MainPage.SetActive(false);
                         CameraController.Instance.MiscPage.SetActive(false);
                         CameraController.Instance.ExtraPage.SetActive(true);
+                        CameraController.Instance.SyncExtraPageUnpin();
                         break;
                     case "ExtraMiscBtn":
                         CameraController.Instance.OpenMiscFromExtraPage();
@@ -54,41 +66,115 @@ namespace YizziCamModV2.Comps
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.MainPage.SetActive(true);
                         break;
-                    case "WeatherTimeBtn":
+                    // ── Pin Selector Page buttons ─────────────────────────────────────
+                    case "PSCancelButton":
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    case "PS_WeatherTimeBtn":
                         CameraController.Instance.PinExtraChoice("WeatherTimeBtn");
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    case "PS_CameraClipBtn":
+                        CameraController.Instance.PinExtraChoice("CameraClipBtn");
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    case "PS_GeneralBtn":
+                        CameraController.Instance.PinExtraChoice("GeneralBtn");
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    case "PS_SaveSettsBtn":
+                        CameraController.Instance.PinExtraChoice("SaveSettsBtn");
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    case "PS_LobbyHopBtn":
+                        CameraController.Instance.PinExtraChoice("LobbyHopBtn");
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    case "PS_WardrobeBtn":
+                        CameraController.Instance.PinExtraChoice("GridBtn_1_1");
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    case "PS_ReportBtn":
+                        CameraController.Instance.PinExtraChoice("GridBtn_1_2");
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    case "PS_MiscBtn":
+                        CameraController.Instance.PinExtraChoice("ExtraMiscBtn");
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    case "PS_MusicBtn":
+                        CameraController.Instance.PinExtraChoice("MusicBtn");
+                        if (CameraController.Instance.PinSelectorPage != null)
+                            CameraController.Instance.PinSelectorPage.SetActive(false);
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    // ── Sub-page UNPIN button ─────────────────────────────────────────
+                    case "UnpinButton":
+                        this.transform.parent.gameObject.SetActive(false);
+                        CameraController.Instance.UnpinExtraChoice();
+                        CameraController.Instance.MainPage.SetActive(true);
+                        break;
+                    // ── Extra Options page UNPIN (for action-only pins) ───────────────
+                    case "ExtraPageUnpinButton":
+                        CameraController.Instance.UnpinExtraChoice();
+                        if (CameraController.Instance.ExtraPageUnpinButton != null)
+                            CameraController.Instance.ExtraPageUnpinButton.SetActive(false);
+                        break;
+                    case "WeatherTimeBtn":
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.WeatherTimePage.SetActive(true);
                         CameraController.Instance.SyncWeatherPageStatusTexts();
+                        CameraController.Instance.SyncSubPageUnpin("WeatherTimeBtn");
                         break;
                     case "WTBackButton":
                         CameraController.Instance.WeatherTimePage.SetActive(false);
                         CameraController.Instance.ExtraPage.SetActive(true);
+                        CameraController.Instance.SyncExtraPageUnpin();
                         break;
                     case "CameraClipBtn":
-                        CameraController.Instance.PinExtraChoice("CameraClipBtn");
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.CameraClipPage.SetActive(true);
                         if (CameraController.Instance.ClipLagStatusText != null)
                             CameraController.Instance.ClipLagStatusText.text = CameraController.Instance.fpvClipping ? "CLIP LAGGING:ON" : "CLIP LAGGING:OFF";
                         if (CameraController.Instance.ClipLagValueText != null)
                             CameraController.Instance.ClipLagValueText.text = CameraController.Instance.fpvClipLag.ToString("F2");
+                        CameraController.Instance.SyncSubPageUnpin("CameraClipBtn");
                         break;
                     case "CCBackButton":
                         CameraController.Instance.CameraClipPage.SetActive(false);
                         CameraController.Instance.ExtraPage.SetActive(true);
+                        CameraController.Instance.SyncExtraPageUnpin();
                         break;
                     case "GeneralBtn":
-                        CameraController.Instance.PinExtraChoice("GeneralBtn");
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.GeneralPage.SetActive(true);
                         CameraController.Instance.SyncGeneralPageStatusTexts();
+                        CameraController.Instance.SyncSubPageUnpin("GeneralBtn");
                         break;
                     case "GenBackButton":
                         CameraController.Instance.GeneralPage.SetActive(false);
                         CameraController.Instance.ExtraPage.SetActive(true);
+                        CameraController.Instance.SyncExtraPageUnpin();
                         break;
                     case "SaveSettsBtn":
-                        CameraController.Instance.PinExtraChoice("SaveSettsBtn");
                         {
                             var ui = CameraController.Instance.GetComponent<UI>();
                             Settings.Save(
@@ -107,24 +193,24 @@ namespace YizziCamModV2.Comps
                         }
                         break;
                     case "LobbyHopBtn":
-                        CameraController.Instance.PinExtraChoice("LobbyHopBtn");
                         CameraController.Instance.LobbyHop();
                         break;
                     case "GridBtn_1_1":
-                        CameraController.Instance.PinExtraChoice("GridBtn_1_1");
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.WardrobePage.SetActive(true);
                         TabletWardrobe.Instance?.RefreshDisplay();
+                        CameraController.Instance.SyncSubPageUnpin("GridBtn_1_1");
                         break;
                     case "WBBackButton":
                         CameraController.Instance.WardrobePage.SetActive(false);
                         CameraController.Instance.ExtraPage.SetActive(true);
+                        CameraController.Instance.SyncExtraPageUnpin();
                         break;
                     case "GridBtn_1_2":
-                        CameraController.Instance.PinExtraChoice("GridBtn_1_2");
                         CameraController.Instance.ExtraPage.SetActive(false);
                         CameraController.Instance.ReportPage.SetActive(true);
                         TabletReport.Instance?.Refresh();
+                        CameraController.Instance.SyncSubPageUnpin("GridBtn_1_2");
                         break;
                     case "RPBackButton":
                         if (TabletReport.Instance != null && TabletReport.Instance.IsInDetail)
@@ -135,6 +221,7 @@ namespace YizziCamModV2.Comps
                         {
                             CameraController.Instance.ReportPage.SetActive(false);
                             CameraController.Instance.ExtraPage.SetActive(true);
+                            CameraController.Instance.SyncExtraPageUnpin();
                         }
                         break;
                     case "RPDetailBack":
@@ -270,6 +357,41 @@ namespace YizziCamModV2.Comps
                         if (CameraController.Instance.ClipLagValueText != null)
                             CameraController.Instance.ClipLagValueText.text = CameraController.Instance.fpvClipLag.ToString("F2");
                         CameraController.Instance.canbeused = true;
+                        break;
+                    case "MusicBtn":
+                        CameraController.Instance.ExtraPage.SetActive(false);
+                        if (CameraController.Instance.MusicPage != null)
+                        {
+                            CameraController.Instance.MusicPage.SetActive(true);
+                            CameraController.Instance.RefreshMediaInfo();
+                        }
+                        CameraController.Instance.SyncSubPageUnpin("MusicBtn");
+                        break;
+                    case "MusicBackButton":
+                        if (CameraController.Instance.MusicPage != null)
+                            CameraController.Instance.MusicPage.SetActive(false);
+                        CameraController.Instance.ExtraPage.SetActive(true);
+                        CameraController.Instance.SyncExtraPageUnpin();
+                        break;
+                    case "MusicPlayPauseBtn":
+                        CameraController.Instance.SendMediaKeyPublic(CameraController.MK_PLAY_PAUSE);
+                        break;
+                    case "MusicPrevBtn":
+                        CameraController.Instance.SendMediaKeyPublic(CameraController.MK_PREV);
+                        break;
+                    case "MusicNextBtn":
+                        CameraController.Instance.SendMediaKeyPublic(CameraController.MK_NEXT);
+                        break;
+                    case "MusicVolDownBtn":
+                        CameraController.Instance.SendMediaKeyPublic(CameraController.MK_VOL_DOWN);
+                        CameraController.Instance.canbeused = true;
+                        break;
+                    case "MusicVolUpBtn":
+                        CameraController.Instance.SendMediaKeyPublic(CameraController.MK_VOL_UP);
+                        CameraController.Instance.canbeused = true;
+                        break;
+                    case "MusicMuteBtn":
+                        CameraController.Instance.SendMediaKeyPublic(CameraController.MK_MUTE);
                         break;
                     case "WTDawnBtn":
                         { var ui = CameraController.Instance.GetComponent<UI>(); ui.timePreset = 0; }

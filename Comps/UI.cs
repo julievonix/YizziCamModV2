@@ -237,6 +237,13 @@ namespace YizziCamModV2.Comps
                     CameraController.Instance.fp = false;
                     CameraController.Instance.tpv = false;
                     freecam = !freecam;
+                    if (freecam && CameraController.Instance.camDisconnect)
+                    {
+                        CameraController.Instance.camDisconnect = false;
+                        PlayerPrefs.SetInt("YizziCamDis", 0);
+                        PlayerPrefs.Save();
+                        CameraController.Instance.SyncGeneralPageStatusTexts();
+                    }
                 }
                 y += sp;
 
